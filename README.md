@@ -1,6 +1,5 @@
 # Claudable (Cloud-Native SaaS Edition)
 
-<img src="https://storage.googleapis.com/claudable-assets/Claudable.png" alt="Claudable" style="width: 100%;" />
 <div align="center">
 <h3>Connect CLI Agent • Build what you want • Deploy instantly</h3>
 </div>
