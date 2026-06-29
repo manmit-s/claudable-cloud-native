@@ -104,7 +104,16 @@ async function ensureDatabaseSynced() {
   }
 
   try {
-    const tables = await prisma.$queryRaw`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'projects'`;
+    const dbUrl = process.env.DATABASE_URL || '';
+    const isSqlite = dbUrl.startsWith('file:') || dbUrl.startsWith('sqlite:') || dbUrl.includes('.db');
+    
+    let tables;
+    if (isSqlite) {
+      tables = await prisma.$queryRaw`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'projects'`;
+    } else {
+      tables = await prisma.$queryRaw`SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'projects'`;
+    }
+
     if (!Array.isArray(tables) || tables.length === 0) {
       await runPrismaDbPush();
     }
