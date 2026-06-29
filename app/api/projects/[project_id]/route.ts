@@ -1,8 +1,8 @@
 /**
  * Single Project API Routes
- * GET /api/projects/[project_id] - Retrieve project
- * PUT /api/projects/[project_id] - Update project
- * DELETE /api/projects/[project_id] - Delete project
+ * GET /api/projects/[project_id] - Retrieve project (authenticated)
+ * PUT /api/projects/[project_id] - Update project (authenticated)
+ * DELETE /api/projects/[project_id] - Delete project (authenticated)
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -13,6 +13,7 @@ import {
 } from '@/lib/services/project';
 import type { UpdateProjectInput } from '@/types/backend';
 import { serializeProject } from '@/lib/serializers/project';
+import { withAuth } from '@/lib/middleware/auth';
 
 interface RouteContext {
   params: Promise<{ project_id: string }>;
@@ -22,13 +23,14 @@ interface RouteContext {
  * GET /api/projects/[project_id]
  * Retrieve specific project
  */
-export async function GET(
+async function getProjectHandler(
   request: NextRequest,
+  userId: string,
   { params }: RouteContext
 ) {
   try {
     const { project_id } = await params;
-    const project = await getProjectById(project_id);
+    const project = await getProjectById(project_id, userId);
 
     if (!project) {
       return NextResponse.json(
@@ -55,8 +57,9 @@ export async function GET(
  * PUT /api/projects/[project_id]
  * Update project
  */
-export async function PUT(
+async function updateProjectHandler(
   request: NextRequest,
+  userId: string,
   { params }: RouteContext
 ) {
   try {
@@ -74,17 +77,23 @@ export async function PUT(
       settings: body.settings,
     };
 
-    const project = await updateProject(project_id, input);
+    const project = await updateProject(project_id, input, userId);
     return NextResponse.json({ success: true, data: serializeProject(project) });
   } catch (error) {
     console.error('[API] Failed to update project:', error);
 
     // Distinguish between different error types
     if (error instanceof Error) {
-      if (error.message.includes('not found')) {
+      if (error.message.includes('not found') || error.message.includes('access denied')) {
         return NextResponse.json(
           { success: false, error: 'Project not found' },
           { status: 404 }
+        );
+      }
+      if (error.message.includes('Forbidden')) {
+        return NextResponse.json(
+          { success: false, error: 'Forbidden: You do not own this project' },
+          { status: 403 }
         );
       }
       if (error.message.includes('validation') || error.message.includes('invalid')) {
@@ -110,13 +119,14 @@ export async function PUT(
  * DELETE /api/projects/[project_id]
  * Delete project
  */
-export async function DELETE(
+async function deleteProjectHandler(
   request: NextRequest,
+  userId: string,
   { params }: RouteContext
 ) {
   try {
     const { project_id } = await params;
-    await deleteProject(project_id);
+    await deleteProject(project_id, userId);
 
     return NextResponse.json({
       success: true,
@@ -124,6 +134,12 @@ export async function DELETE(
     });
   } catch (error) {
     console.error('[API] Failed to delete project:', error);
+    if (error instanceof Error && (error.message.includes('not found') || error.message.includes('access denied'))) {
+      return NextResponse.json(
+        { success: false, error: 'Project not found' },
+        { status: 404 }
+      );
+    }
     return NextResponse.json(
       {
         success: false,
@@ -134,6 +150,10 @@ export async function DELETE(
     );
   }
 }
+
+export const GET = withAuth(getProjectHandler);
+export const PUT = withAuth(updateProjectHandler);
+export const DELETE = withAuth(deleteProjectHandler);
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
