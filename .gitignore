@@ -75,10 +75,8 @@ temp/
 dist/
 release/
 
-# Temporary ignored files
-implementation_plan.md
-project_context.md
-migration_roadmap.md
+# Temporary ignored directories
+plans_and_context
 
 # Large media assets
 assets/gif/
