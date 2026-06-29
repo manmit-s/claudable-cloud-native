@@ -1,6 +1,6 @@
 /**
  * AI Action API Route
- * POST /api/chat/[project_id]/act - Execute AI command
+ * POST /api/chat/[project_id]/act - Execute AI command (authenticated)
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -28,6 +28,7 @@ import {
   upsertUserRequest,
   markUserRequestAsProcessing,
 } from '@/lib/services/user-requests';
+import { withAuth } from '@/lib/middleware/auth';
 
 interface RouteContext {
   params: Promise<{ project_id: string }>;
@@ -228,14 +229,18 @@ async function normalizeImageAttachment(
  * POST /api/chat/[project_id]/act
  * Execute AI command
  */
-export async function POST(request: NextRequest, { params }: RouteContext) {
+async function actHandler(
+  request: NextRequest,
+  userId: string,
+  { params }: RouteContext
+) {
   try {
     const { project_id } = await params;
     const rawBody = await request.json().catch(() => ({}));
     const body = (rawBody && typeof rawBody === 'object' ? rawBody : {}) as ChatActRequest &
       Record<string, unknown>;
 
-    const project = await getProjectById(project_id);
+    const project = await getProjectById(project_id, userId);
     if (!project) {
       return NextResponse.json(
         { success: false, error: 'Project not found' },
@@ -380,7 +385,7 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
         await updateProject(project_id, {
           preferredCli: cliPreference,
           selectedModel,
-        });
+        }, userId);
       } catch (error) {
         console.error('[API] Failed to persist project CLI/model settings:', error);
       }
@@ -468,6 +473,8 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
     );
   }
 }
+
+export const POST = withAuth(actHandler);
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
