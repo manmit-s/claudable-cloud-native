@@ -8,12 +8,17 @@ import {
   writeProjectFileContent,
   FileBrowserError,
 } from '@/lib/services/file-browser';
+import { withAuth } from '@/lib/middleware/auth';
 
 interface RouteContext {
   params: Promise<{ project_id: string }>;
 }
 
-export async function GET(request: NextRequest, { params }: RouteContext) {
+async function getFileHandler(
+  request: NextRequest,
+  userId: string,
+  { params }: RouteContext
+) {
   try {
     const { project_id } = await params;
     const url = new URL(request.url);
@@ -26,7 +31,7 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
       );
     }
 
-    const file = await readProjectFileContent(project_id, filePath);
+    const file = await readProjectFileContent(project_id, filePath, userId);
 
     return NextResponse.json({
       success: true,
@@ -51,7 +56,13 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
   }
 }
 
-export async function PUT(request: NextRequest, { params }: RouteContext) {
+export const GET = withAuth(getFileHandler);
+
+async function putFileHandler(
+  request: NextRequest,
+  userId: string,
+  { params }: RouteContext
+) {
   try {
     const { project_id } = await params;
     const body = await request.json();
@@ -72,7 +83,7 @@ export async function PUT(request: NextRequest, { params }: RouteContext) {
       );
     }
 
-    await writeProjectFileContent(project_id, filePath, content);
+    await writeProjectFileContent(project_id, filePath, content, userId);
 
     return NextResponse.json({
       success: true,
@@ -96,3 +107,5 @@ export async function PUT(request: NextRequest, { params }: RouteContext) {
     );
   }
 }
+
+export const PUT = withAuth(putFileHandler);
