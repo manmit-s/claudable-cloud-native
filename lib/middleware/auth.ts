@@ -4,7 +4,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getUserIdFromRequest, createSupabaseServerClient } from '@/lib/supabase/client';
+import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { prisma } from '@/lib/db/client';
 
 export class AuthError extends Error {
