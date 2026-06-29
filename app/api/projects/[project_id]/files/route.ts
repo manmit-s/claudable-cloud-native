@@ -4,18 +4,23 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { listProjectDirectory, FileBrowserError } from '@/lib/services/file-browser';
+import { withAuth } from '@/lib/middleware/auth';
 
 interface RouteContext {
   params: Promise<{ project_id: string }>;
 }
 
-export async function GET(request: NextRequest, { params }: RouteContext) {
+async function getFilesHandler(
+  request: NextRequest,
+  userId: string,
+  { params }: RouteContext
+) {
   try {
     const { project_id } = await params;
     const url = new URL(request.url);
     const dir = url.searchParams.get('path') ?? '.';
 
-    const entries = await listProjectDirectory(project_id, dir);
+    const entries = await listProjectDirectory(project_id, dir, userId);
 
     return NextResponse.json({
       success: true,
@@ -41,3 +46,5 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
     );
   }
 }
+
+export const GET = withAuth(getFilesHandler);
