@@ -99,9 +99,10 @@ async function directoryHasVisibleChildren(
 
 export async function listProjectDirectory(
   projectId: string,
-  dir = '.'
+  dir = '.',
+  userId: string
 ): Promise<ProjectFileEntry[]> {
-  const project = await getProjectById(projectId);
+  const project = await getProjectById(projectId, userId);
   if (!project) {
     throw new FileBrowserError('Project not found', 404);
   }
@@ -178,9 +179,10 @@ const MAX_FILE_BYTES = 500_000; // 500KB safeguard
 
 export async function readProjectFileContent(
   projectId: string,
-  filePath: string
+  filePath: string,
+  userId: string
 ): Promise<{ path: string; content: string }> {
-  const project = await getProjectById(projectId);
+  const project = await getProjectById(projectId, userId);
   if (!project) {
     throw new FileBrowserError('Project not found', 404);
   }
@@ -223,9 +225,10 @@ const MAX_WRITE_BYTES = 1_000_000; // 1MB safeguard
 export async function writeProjectFileContent(
   projectId: string,
   filePath: string,
-  content: string
+  content: string,
+  userId: string
 ): Promise<void> {
-  const project = await getProjectById(projectId);
+  const project = await getProjectById(projectId, userId);
   if (!project) {
     throw new FileBrowserError('Project not found', 404);
   }
