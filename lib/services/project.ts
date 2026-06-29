@@ -14,10 +14,11 @@ const PROJECTS_DIR_ABSOLUTE = path.isAbsolute(PROJECTS_DIR)
   : path.resolve(process.cwd(), PROJECTS_DIR);
 
 /**
- * Retrieve all projects
+ * Retrieve all projects for a user
  */
-export async function getAllProjects(): Promise<Project[]> {
+export async function getAllProjects(userId: string): Promise<Project[]> {
   const projects = await prisma.project.findMany({
+    where: { userId },
     orderBy: {
       lastActiveAt: 'desc',
     },
@@ -29,13 +30,19 @@ export async function getAllProjects(): Promise<Project[]> {
 }
 
 /**
- * Retrieve project by ID
+ * Retrieve project by ID with ownership verification
  */
-export async function getProjectById(id: string): Promise<Project | null> {
+export async function getProjectById(id: string, userId?: string): Promise<Project | null> {
   const project = await prisma.project.findUnique({
     where: { id },
   });
   if (!project) return null;
+  
+  // If userId provided, verify ownership
+  if (userId && project.userId !== userId) {
+    return null;
+  }
+  
   return {
     ...project,
     selectedModel: normalizeModelId(project.preferredCli ?? 'claude', project.selectedModel ?? undefined),
@@ -43,9 +50,9 @@ export async function getProjectById(id: string): Promise<Project | null> {
 }
 
 /**
- * Create new project
+ * Create new project for a user
  */
-export async function createProject(input: CreateProjectInput): Promise<Project> {
+export async function createProject(input: CreateProjectInput, userId: string): Promise<Project> {
   // Create project directory
   const projectPath = path.join(PROJECTS_DIR_ABSOLUTE, input.project_id);
   await fs.mkdir(projectPath, { recursive: true });
@@ -65,10 +72,11 @@ export async function createProject(input: CreateProjectInput): Promise<Project>
       lastActiveAt: new Date(),
       previewUrl: null,
       previewPort: null,
+      userId,
     },
   });
 
-  console.log(`[ProjectService] Created project: ${project.id}`);
+  console.log(`[ProjectService] Created project: ${project.id} for user: ${userId}`);
   return {
     ...project,
     selectedModel: normalizeModelId(project.preferredCli ?? 'claude', project.selectedModel ?? undefined),
@@ -76,16 +84,27 @@ export async function createProject(input: CreateProjectInput): Promise<Project>
 }
 
 /**
- * Update project
+ * Update project with ownership verification
  */
 export async function updateProject(
   id: string,
-  input: UpdateProjectInput
+  input: UpdateProjectInput,
+  userId?: string
 ): Promise<Project> {
   const existing = await prisma.project.findUnique({
     where: { id },
-    select: { preferredCli: true },
+    select: { preferredCli: true, userId: true },
   });
+  
+  if (!existing) {
+    throw new Error('Project not found');
+  }
+  
+  // Verify ownership if userId provided
+  if (userId && existing.userId !== userId) {
+    throw new Error('Forbidden: You do not own this project');
+  }
+  
   const targetCli = input.preferredCli ?? existing?.preferredCli ?? 'claude';
   const normalizedModel = input.selectedModel
     ? normalizeModelId(targetCli, input.selectedModel)
@@ -110,12 +129,16 @@ export async function updateProject(
 }
 
 /**
- * Delete project
+ * Delete project with ownership verification
  */
-export async function deleteProject(id: string): Promise<void> {
+export async function deleteProject(id: string, userId?: string): Promise<void> {
+  const project = await getProjectById(id, userId);
+  if (!project) {
+    throw new Error('Project not found or access denied');
+  }
+
   // Delete project directory
-  const project = await getProjectById(id);
-  if (project?.repoPath) {
+  if (project.repoPath) {
     try {
       await fs.rm(project.repoPath, { recursive: true, force: true });
     } catch (error) {
