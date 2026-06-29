@@ -1,7 +1,7 @@
 /**
  * Projects API Routes
- * GET /api/projects - Get all projects
- * POST /api/projects - Create new project
+ * GET /api/projects - Get all projects (authenticated)
+ * POST /api/projects - Create new project (authenticated)
  */
 
 import { NextRequest } from 'next/server';
@@ -10,14 +10,15 @@ import type { CreateProjectInput } from '@/types/backend';
 import { serializeProjects, serializeProject } from '@/lib/serializers/project';
 import { getDefaultModelForCli, normalizeModelId } from '@/lib/constants/cliModels';
 import { createSuccessResponse, createErrorResponse, handleApiError } from '@/lib/utils/api-response';
+import { withAuth } from '@/lib/middleware/auth';
 
 /**
  * GET /api/projects
- * Get all projects list
+ * Get all projects list for authenticated user
  */
-export async function GET() {
+async function getProjectsHandler(request: NextRequest, userId: string) {
   try {
-    const projects = await getAllProjects();
+    const projects = await getAllProjects(userId);
     return createSuccessResponse(serializeProjects(projects));
   } catch (error) {
     return handleApiError(error, 'API', 'Failed to fetch projects');
@@ -26,9 +27,9 @@ export async function GET() {
 
 /**
  * POST /api/projects
- * Create new project
+ * Create new project for authenticated user
  */
-export async function POST(request: NextRequest) {
+async function createProjectHandler(request: NextRequest, userId: string) {
   try {
     const body = await request.json();
     const preferredCli = String(body.preferredCli || body.preferred_cli || 'claude').toLowerCase();
@@ -48,12 +49,15 @@ export async function POST(request: NextRequest) {
       return createErrorResponse('project_id and name are required', undefined, 400);
     }
 
-    const project = await createProject(input);
+    const project = await createProject(input, userId);
     return createSuccessResponse(serializeProject(project), 201);
   } catch (error) {
     return handleApiError(error, 'API', 'Failed to create project');
   }
 }
+
+export const GET = withAuth(getProjectsHandler);
+export const POST = withAuth(createProjectHandler);
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
