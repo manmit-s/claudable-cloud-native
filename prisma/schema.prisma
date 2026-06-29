@@ -1,13 +1,30 @@
-// Claudable - Prisma Schema (SQLite)
-// Supports both development and production using SQLite
+// Claudable - Prisma Schema (PostgreSQL / Supabase)
+// Multi-user cloud-native SaaS schema
 
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ============================================================
+// Auth / Users (Supabase Auth is the source of truth for auth,
+// but we keep a local mirror for foreign-key relationships.)
+// ============================================================
+
+model User {
+  id        String   @id // Matches Supabase auth.users.id (uuid)
+  email     String   @unique
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  projects Project[]
+
+  @@map("users")
 }
 
 // ============================================================
@@ -16,6 +33,7 @@ datasource db {
 
 model Project {
   id          String   @id @default(cuid())
+  userId      String?  @map("user_id") // Owner (nullable during migration)
   name        String
   description String?
   status      String   @default("idle") // idle, running, stopped, error
@@ -49,15 +67,48 @@ model Project {
   lastActiveAt DateTime @default(now()) @map("last_active_at")
 
   // Relations
-  messages              Message[]
-  sessions              Session[]
-  envVars               EnvVar[]
-  serviceConnections    ProjectServiceConnection[]
-  commits               Commit[]
-  toolUsages            ToolUsage[]
-  userRequests          UserRequest[]
+  user                 User?                    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  messages             Message[]
+  sessions             Session[]
+  envVars              EnvVar[]
+  serviceConnections   ProjectServiceConnection[]
+  commits              Commit[]
+  toolUsages           ToolUsage[]
+  userRequests         UserRequest[]
+  files                ProjectFile[]
 
+  @@index([userId])
   @@map("projects")
+}
+
+// ============================================================
+// Project Files (ZIP artifacts in Supabase Storage)
+// ============================================================
+
+model ProjectFile {
+  id          String   @id @default(cuid())
+  projectId   String   @map("project_id")
+  userId      String?  @map("user_id")
+
+  // Storage info
+  storagePath   String   @map("storage_path") // path in Supabase Storage bucket
+  fileName      String   @map("file_name")
+  mimeType      String   @default("application/zip") @map("mime_type")
+  sizeBytes     Int      @map("size_bytes")
+
+  // Metadata
+  archiveType   String   @default("snapshot") @map("archive_type") // snapshot, final
+  description   String?
+
+  // Timestamps
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  // Relations
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([userId])
+  @@map("project_files")
 }
 
 model Message {
