@@ -1,13 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { updateEnvVar, deleteEnvVar } from '@/lib/services/env';
+import { withAuth, AuthError, getProjectWithOwnership } from '@/lib/middleware/auth';
 
 interface RouteContext {
   params: Promise<{ project_id: string; key: string }>;
 }
 
-export async function PUT(request: NextRequest, { params }: RouteContext) {
+async function putHandler(request: NextRequest, userId: string, { params }: RouteContext) {
   try {
     const { project_id, key } = await params;
+    await getProjectWithOwnership(project_id, userId);
     const body = await request.json();
     if (typeof body?.value !== 'string') {
       return NextResponse.json(
@@ -29,6 +31,9 @@ export async function PUT(request: NextRequest, { params }: RouteContext) {
       message: `Environment variable '${key}' updated`,
     });
   } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ success: false, error: error.message }, { status: error.statusCode });
+    }
     console.error('[Env API] Failed to update env var:', error);
     return NextResponse.json(
       {
@@ -41,9 +46,10 @@ export async function PUT(request: NextRequest, { params }: RouteContext) {
   }
 }
 
-export async function DELETE(_request: NextRequest, { params }: RouteContext) {
+async function deleteHandler(_request: NextRequest, userId: string, { params }: RouteContext) {
   try {
     const { project_id, key } = await params;
+    await getProjectWithOwnership(project_id, userId);
     const deleted = await deleteEnvVar(project_id, key);
     if (!deleted) {
       return NextResponse.json(
@@ -57,6 +63,9 @@ export async function DELETE(_request: NextRequest, { params }: RouteContext) {
       message: `Environment variable '${key}' deleted`,
     });
   } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ success: false, error: error.message }, { status: error.statusCode });
+    }
     console.error('[Env API] Failed to delete env var:', error);
     return NextResponse.json(
       {
@@ -68,6 +77,9 @@ export async function DELETE(_request: NextRequest, { params }: RouteContext) {
     );
   }
 }
+
+export const PUT = withAuth(putHandler);
+export const DELETE = withAuth(deleteHandler);
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
