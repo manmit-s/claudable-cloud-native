@@ -6,6 +6,7 @@ import { useState, useCallback, useEffect } from 'react';
 import { CLIOption, CLIStatus, CLIPreference, CLI_OPTIONS } from '@/types/cli';
 import { getDefaultModelForCli } from '@/lib/constants/cliModels';
 import { DEFAULT_ACTIVE_CLI, normalizeModelForCli, sanitizeActiveCli } from '@/lib/utils/cliOptions';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface UseCLIOptions {
   projectId: string;
@@ -25,10 +26,14 @@ const buildOptimisticStatus = (): CLIStatus =>
 
 export const createCliStatusFallback = (): CLIStatus => buildOptimisticStatus();
 
-export async function fetchCliStatusSnapshot(): Promise<CLIStatus> {
+export async function fetchCliStatusSnapshot(token?: string): Promise<CLIStatus> {
   const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? '';
   try {
-    const response = await fetch(`${API_BASE}/api/settings/cli-status`);
+    const headers: Record<string, string> = {};
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+    const response = await fetch(`${API_BASE}/api/settings/cli-status`, { headers });
     if (!response.ok) {
       throw new Error(`Failed to fetch CLI status: ${response.status}`);
     }
@@ -59,6 +64,20 @@ export async function fetchCliStatusSnapshot(): Promise<CLIStatus> {
 }
 
 export function useCLI({ projectId }: UseCLIOptions) {
+  const { session } = useAuth();
+
+  // Shadow the global fetch to automatically inject the access token header
+  const fetch = useCallback(
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      if (session?.access_token) {
+        headers.set('Authorization', `Bearer ${session.access_token}`);
+      }
+      return globalThis.fetch(input, { ...init, headers });
+    },
+    [session]
+  );
+
   const [cliOptions, setCLIOptions] = useState<CLIOption[]>(() => CLI_OPTIONS.map((option) => ({ ...option })));
   const [preference, setPreference] = useState<CLIPreference | null>(null);
   const [statuses, setStatuses] = useState<CLIStatus>(() => createCliStatusFallback());
@@ -118,7 +137,7 @@ export function useCLI({ projectId }: UseCLIOptions) {
       selectedModel: getDefaultModelForCli(DEFAULT_ACTIVE_CLI),
     });
   }
-}, [projectId, parsePreference]);
+}, [projectId, parsePreference, fetch]);
 
   const applyStatusToState = useCallback((status: CLIStatus) => {
     setStatuses(status);
@@ -138,19 +157,19 @@ export function useCLI({ projectId }: UseCLIOptions) {
   const loadStatuses = useCallback(async () => {
     try {
       setIsLoading(true);
-      const status = await fetchCliStatusSnapshot();
+      const status = await fetchCliStatusSnapshot(session?.access_token);
       applyStatusToState(status);
     } finally {
       setIsLoading(false);
     }
-  }, [applyStatusToState]);
+  }, [applyStatusToState, session]);
 
   // Check single CLI status
   const checkCLIStatus = useCallback(async (cliType: string) => {
-    const status = await fetchCliStatusSnapshot();
+    const status = await fetchCliStatusSnapshot(session?.access_token);
     applyStatusToState(status);
     return status[cliType];
-  }, [applyStatusToState]);
+  }, [applyStatusToState, session]);
 
   // Update CLI preference
   const updatePreference = useCallback(async (preferredCliInput: string) => {
@@ -191,7 +210,7 @@ export function useCLI({ projectId }: UseCLIOptions) {
       console.error('Failed to update CLI preference:', error);
       throw error;
     }
-  }, [projectId]);
+  }, [projectId, fetch]);
 
   // Update model preference
   const updateModelPreference = useCallback(async (modelId: string) => {
@@ -229,7 +248,7 @@ export function useCLI({ projectId }: UseCLIOptions) {
       console.error('Failed to update model preference:', error);
       throw error;
     }
-  }, [projectId, preference?.preferredCli]);
+  }, [projectId, preference?.preferredCli, fetch]);
 
 
   // Load on mount
