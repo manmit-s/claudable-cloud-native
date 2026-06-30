@@ -1,13 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { upsertEnvVar } from '@/lib/services/env';
+import { withAuth, AuthError, getProjectWithOwnership } from '@/lib/middleware/auth';
 
 interface RouteContext {
   params: Promise<{ project_id: string }>;
 }
 
-export async function POST(request: NextRequest, { params }: RouteContext) {
+async function handler(request: NextRequest, userId: string, { params }: RouteContext) {
   try {
     const { project_id } = await params;
+    await getProjectWithOwnership(project_id, userId);
     const body = await request.json();
     if (!body?.key || typeof body.key !== 'string') {
       return NextResponse.json(
@@ -33,6 +35,9 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
 
     return NextResponse.json({ success: true, data: record });
   } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ success: false, error: error.message }, { status: error.statusCode });
+    }
     console.error('[Env API] Failed to upsert env var:', error);
     return NextResponse.json(
       {
@@ -44,6 +49,8 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
     );
   }
 }
+
+export const POST = withAuth(handler);
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
