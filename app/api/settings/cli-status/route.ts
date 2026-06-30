@@ -12,6 +12,8 @@ import { QWEN_MODEL_DEFINITIONS } from '@/lib/constants/qwenModels';
 import { GLM_MODEL_DEFINITIONS } from '@/lib/constants/glmModels';
 import { CURSOR_MODEL_DEFINITIONS } from '@/lib/constants/cursorModels';
 
+import { withAuth } from '@/lib/middleware/auth';
+
 const execAsync = promisify(exec);
 
 /**
@@ -105,7 +107,7 @@ async function checkQwenCLI(): Promise<{
  * GET /api/settings/cli-status
  * Check CLI installation status
  */
-export async function GET() {
+async function getHandler() {
   try {
     const status: CLIStatus = {
       claude: {
@@ -191,6 +193,8 @@ export async function GET() {
     );
   }
 }
+
+export const GET = withAuth(getHandler);
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
