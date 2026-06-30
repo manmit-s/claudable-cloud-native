@@ -1,13 +1,15 @@
 import { NextResponse } from 'next/server';
 import { getActiveSession } from '@/lib/services/chat-sessions';
+import { withAuth, getProjectWithOwnership, AuthError } from '@/lib/middleware/auth';
 
 interface RouteContext {
   params: Promise<{ project_id: string }>;
 }
 
-export async function GET(_request: Request, { params }: RouteContext) {
+async function handler(_request: Request, _userId: string, { params }: RouteContext) {
   try {
     const { project_id } = await params;
+    await getProjectWithOwnership(project_id, _userId);
     const session = await getActiveSession(project_id);
 
     // Return 200 with null data when no session exists (successful query, no results)
@@ -18,6 +20,9 @@ export async function GET(_request: Request, { params }: RouteContext) {
 
     return NextResponse.json({ success: true, data: session });
   } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ success: false, error: error.message }, { status: error.statusCode });
+    }
     console.error('[API] Failed to get active session:', error);
     return NextResponse.json(
       {
@@ -29,6 +34,8 @@ export async function GET(_request: Request, { params }: RouteContext) {
     );
   }
 }
+
+export const GET = withAuth(handler);
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
