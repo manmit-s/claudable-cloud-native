@@ -4,6 +4,7 @@ import {
   updateGlobalSettings,
   normalizeCliSettings,
 } from '@/lib/services/settings';
+import { withAuth } from '@/lib/middleware/auth';
 
 function serialize(settings: Awaited<ReturnType<typeof loadGlobalSettings>>) {
   return {
@@ -13,12 +14,12 @@ function serialize(settings: Awaited<ReturnType<typeof loadGlobalSettings>>) {
   };
 }
 
-export async function GET() {
+async function getHandler() {
   const settings = await loadGlobalSettings();
   return NextResponse.json(serialize(settings));
 }
 
-export async function PUT(request: NextRequest) {
+async function putHandler(request: NextRequest) {
   try {
     const body = await request.json();
     const candidate = body && typeof body === 'object' ? (body as Record<string, unknown>) : {};
@@ -49,6 +50,9 @@ export async function PUT(request: NextRequest) {
     );
   }
 }
+
+export const GET = withAuth(getHandler);
+export const PUT = withAuth(putHandler);
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
