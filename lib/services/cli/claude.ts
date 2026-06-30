@@ -4,7 +4,8 @@
  * Interacts with projects using the Claude Agent SDK.
  */
 
-import { query, type SDKMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
+import { startWorkspace, executeInWorkspace } from '../container-workspace';
 import type { ClaudeSession, ClaudeResponse } from '@/types/backend';
 import { streamManager } from '../stream';
 import { serializeMessage, createRealtimeMessage } from '@/lib/serializers/chat';
@@ -712,41 +713,14 @@ export async function executeClaude(
     // Send ready notification via SSE
     publishStatus('ready', 'Project verified. Starting AI...');
 
-    // Start Claude Agent SDK query
-    console.log(`[ClaudeService] 🤖 Querying Claude Agent SDK...`);
-    console.log(`[ClaudeService] 📁 Working Directory: ${absoluteProjectPath}`);
-    const response = query({
-      prompt: instruction,
-      options: {
-        workingDirectory: absoluteProjectPath, // Work only in project folder (protects Claudable root)
-        additionalDirectories: [absoluteProjectPath],
-        model: resolvedModel,
-        resume: sessionId, // Resume previous session
-        permissionMode: 'bypassPermissions', // Auto-approve commands and edits
-        systemPrompt: `You are an expert web developer building a Next.js application.
-- Use Next.js 15 App Router
-- Use TypeScript
-- Use Tailwind CSS for styling
-- Write clean, production-ready code
-- Follow best practices
-- The platform automatically installs dependencies and manages the preview dev server. Do not run package managers or dev-server commands yourself; rely on the existing preview.
-- Keep all project files directly in the project root. Never scaffold frameworks into subdirectories (avoid commands like "mkdir new-app" or "create-next-app my-app"; run generators against the current directory instead).
-- Never override ports or start your own development server processes. Rely on the managed preview service which assigns ports from the approved pool.
-- When sharing a preview link, read the actual NEXT_PUBLIC_APP_URL (e.g. from .env/.env.local or project metadata) instead of assuming a default port.
-- Prefer giving the user the live preview link that is actually running rather than written instructions.`,
-        maxOutputTokens,
-        // Capture SDK stderr so we can surface real errors instead of just exit code
-        stderr: (data: string) => {
-          const line = String(data).trimEnd();
-          if (!line) return;
-          // Keep only the last ~200 lines to avoid memory bloat
-          if (stderrBuffer.length > 200) stderrBuffer.shift();
-          stderrBuffer.push(line);
-          // Also mirror to server logs for live debugging
-          console.error(`[ClaudeSDK][stderr] ${line}`);
-        },
-      } as any,
-    });
+    // Start Claude Agent SDK query in Docker container
+    console.log(`[ClaudeService] 🤖 Querying Claude Agent SDK in Docker container...`);
+    const apiKey = process.env.ANTHROPIC_API_KEY || '';
+    if (!apiKey) {
+      throw new Error('ANTHROPIC_API_KEY environment variable is not set');
+    }
+
+    await startWorkspace(projectId, apiKey);
 
     let currentSessionId: string | undefined = sessionId;
 
@@ -760,131 +734,91 @@ export async function executeClaude(
     const assistantStreamStates = new Map<string, AssistantStreamState>();
     const completedStreamSessions = new Set<string>();
 
-    // Handle streaming response
-    for await (const message of response) {
-      console.log('[ClaudeService] Message type:', message.type);
+    await executeInWorkspace(
+      projectId,
+      instruction,
+      resolvedModel,
+      sessionId,
+      maxOutputTokens,
+      async (message: SDKMessage) => {
+        console.log('[ClaudeService] Message type:', message.type);
 
-      if (message.type === 'stream_event') {
-        const event: any = (message as any).event ?? {};
-        const sessionKey = (message.session_id ?? message.uuid ?? 'default').toString();
-        console.log('[ClaudeService] Stream event type:', event.type);
+        if (message.type === 'stream_event') {
+          const event: any = (message as any).event ?? {};
+          const sessionKey = (message.session_id ?? message.uuid ?? 'default').toString();
+          console.log('[ClaudeService] Stream event type:', event.type);
 
-        let streamState = assistantStreamStates.get(sessionKey);
+          let streamState = assistantStreamStates.get(sessionKey);
 
-        switch (event.type) {
-          case 'message_start': {
-            const newState: AssistantStreamState = {
-              messageId: randomUUID(),
-              content: '',
-              hasSentUpdate: false,
-              finalized: false,
-            };
-            assistantStreamStates.set(sessionKey, newState);
-            break;
-          }
-          case 'content_block_start': {
-            const contentBlock = event.content_block;
-            if (contentBlock && typeof contentBlock === 'object' && contentBlock.type === 'tool_use') {
-              const metadata = buildToolMetadata(contentBlock as Record<string, unknown>);
-              await dispatchToolMessage({
-                projectId,
-                metadata,
-                content: `Using tool: ${contentBlock.name ?? 'tool'}`,
-                requestId,
-                persist: false,
-                isStreaming: true,
-              });
-            }
-            break;
-          }
-          case 'content_block_delta': {
-            const delta = event.delta;
-            let textChunk = '';
-
-            if (typeof delta === 'string') {
-              textChunk = delta;
-            } else if (delta && typeof delta === 'object') {
-              if (typeof delta.text === 'string') {
-                textChunk = delta.text;
-              } else if (typeof delta.delta === 'string') {
-                textChunk = delta.delta;
-              } else if (typeof delta.partial === 'string') {
-                textChunk = delta.partial;
-              }
-            }
-
-            if (typeof textChunk !== 'string' || textChunk.length === 0) {
-              break;
-            }
-
-            if (!streamState || streamState.finalized) {
-              streamState = {
+          switch (event.type) {
+            case 'message_start': {
+              const newState: AssistantStreamState = {
                 messageId: randomUUID(),
                 content: '',
                 hasSentUpdate: false,
                 finalized: false,
               };
-              assistantStreamStates.set(sessionKey, streamState);
-            }
-
-            streamState.content += textChunk;
-            const trimmedContent = streamState.content.trim();
-            const isPlaceholderLine =
-              trimmedContent.length > 0 &&
-              ((/^\[Tool:\s*.+\]$/i.test(trimmedContent) && !trimmedContent.includes('\n')) ||
-                /^Using tool:/i.test(trimmedContent) ||
-                /^Tool result:/i.test(trimmedContent));
-
-            if (trimmedContent.length === 0) {
-              streamState.content = '';
-              streamState.hasSentUpdate = false;
+              assistantStreamStates.set(sessionKey, newState);
               break;
             }
+            case 'content_block_start': {
+              const contentBlock = event.content_block;
+              if (contentBlock && typeof contentBlock === 'object' && contentBlock.type === 'tool_use') {
+                const metadata = buildToolMetadata(contentBlock as Record<string, unknown>);
+                await dispatchToolMessage({
+                  projectId,
+                  metadata,
+                  content: `Using tool: ${contentBlock.name ?? 'tool'}`,
+                  requestId,
+                  persist: false,
+                  isStreaming: true,
+                });
+              }
+              break;
+            }
+            case 'content_block_delta': {
+              const delta = event.delta;
+              let textChunk = '';
 
-            if (isPlaceholderLine) {
-              const shouldHandle = markPlaceholderHandled(sessionKey, trimmedContent);
-              if (shouldHandle) {
-                try {
-                  await handleToolPlaceholderMessage(
-                    projectId,
-                    trimmedContent,
-                    requestId,
-                    undefined,
-                    { dedupeStore: persistedToolMessageSignatures }
-                  );
-                } catch (error) {
-                  console.error('[ClaudeService] Failed to handle streaming tool placeholder:', error);
+              if (typeof delta === 'string') {
+                textChunk = delta;
+              } else if (delta && typeof delta === 'object') {
+                if (typeof delta.text === 'string') {
+                  textChunk = delta.text;
+                } else if (typeof delta.delta === 'string') {
+                  textChunk = delta.delta;
+                } else if (typeof delta.partial === 'string') {
+                  textChunk = delta.partial;
                 }
               }
-              streamState.content = '';
-              streamState.hasSentUpdate = false;
-              break;
-            }
 
-            streamState.hasSentUpdate = true;
+              if (typeof textChunk !== 'string' || textChunk.length === 0) {
+                break;
+              }
 
-            streamManager.publish(projectId, {
-              type: 'message',
-              data: createRealtimeMessage({
-                id: streamState.messageId,
-                projectId,
-                role: 'assistant',
-                content: streamState.content,
-                messageType: 'chat',
-                requestId,
-                isStreaming: true,
-              }),
-            });
-            break;
-          }
-          case 'message_stop': {
-            if (streamState && streamState.hasSentUpdate && !streamState.finalized) {
+              if (!streamState || streamState.finalized) {
+                streamState = {
+                  messageId: randomUUID(),
+                  content: '',
+                  hasSentUpdate: false,
+                  finalized: false,
+                };
+                assistantStreamStates.set(sessionKey, streamState);
+              }
+
+              streamState.content += textChunk;
               const trimmedContent = streamState.content.trim();
               const isPlaceholderLine =
                 trimmedContent.length > 0 &&
                 ((/^\[Tool:\s*.+\]$/i.test(trimmedContent) && !trimmedContent.includes('\n')) ||
                   /^Using tool:/i.test(trimmedContent) ||
                   /^Tool result:/i.test(trimmedContent));
+
+              if (trimmedContent.length === 0) {
+                streamState.content = '';
+                streamState.hasSentUpdate = false;
+                break;
+              }
 
               if (isPlaceholderLine) {
                 const shouldHandle = markPlaceholderHandled(sessionKey, trimmedContent);
@@ -898,188 +832,227 @@ export async function executeClaude(
                       { dedupeStore: persistedToolMessageSignatures }
                     );
                   } catch (error) {
-                    console.error('[ClaudeService] Failed to handle tool placeholder on stop:', error);
+                    console.error('[ClaudeService] Failed to handle streaming tool placeholder:', error);
                   }
                 }
-              }
-
-              if (
-                trimmedContent.length === 0 ||
-                isPlaceholderLine
-              ) {
-                streamState.hasSentUpdate = false;
-              }
-
-              if (!streamState.hasSentUpdate) {
                 streamState.content = '';
-                assistantStreamStates.delete(sessionKey);
+                streamState.hasSentUpdate = false;
                 break;
               }
 
-              streamState.finalized = true;
-
-              const savedMessage = await createMessage({
-                id: streamState.messageId,
-                projectId,
-                role: 'assistant',
-                messageType: 'chat',
-                content: streamState.content,
-                cliSource: 'claude',
-              });
+              streamState.hasSentUpdate = true;
 
               streamManager.publish(projectId, {
                 type: 'message',
-                data: serializeMessage(savedMessage, {
-                  isStreaming: false,
-                  isFinal: true,
+                data: createRealtimeMessage({
+                  id: streamState.messageId,
+                  projectId,
+                  role: 'assistant',
+                  content: streamState.content,
+                  messageType: 'chat',
                   requestId,
+                  isStreaming: true,
                 }),
               });
-
-              completedStreamSessions.add(sessionKey);
+              break;
             }
+            case 'message_stop': {
+              if (streamState && streamState.hasSentUpdate && !streamState.finalized) {
+                const trimmedContent = streamState.content.trim();
+                const isPlaceholderLine =
+                  trimmedContent.length > 0 &&
+                  ((/^\[Tool:\s*.+\]$/i.test(trimmedContent) && !trimmedContent.includes('\n')) ||
+                    /^Using tool:/i.test(trimmedContent) ||
+                    /^Tool result:/i.test(trimmedContent));
 
-            assistantStreamStates.delete(sessionKey);
-            break;
-          }
-          default:
-            break;
-        }
-
-        continue;
-      }
-
-      // Handle by message type
-      if (message.type === 'system' && message.subtype === 'init') {
-        // Initialize session
-        currentSessionId = message.session_id;
-        console.log(`[ClaudeService] Session initialized: ${currentSessionId}`);
-
-        // Save session ID to project
-        if (currentSessionId) {
-          await updateProject(projectId, {
-            activeClaudeSessionId: currentSessionId,
-          });
-        }
-
-        // Send connection notification via SSE
-        streamManager.publish(projectId, {
-          type: 'connected',
-          data: {
-            projectId,
-            sessionId: currentSessionId,
-            timestamp: new Date().toISOString(),
-            connectionStage: 'assistant',
-          },
-        });
-      } else if (message.type === 'assistant') {
-        const sessionKey = (message.session_id ?? message.uuid ?? 'default').toString();
-        if (completedStreamSessions.has(sessionKey)) {
-          completedStreamSessions.delete(sessionKey);
-          continue;
-        }
-
-        // Assistant message
-        const assistantMessage = message.message;
-        let content = '';
-
-        // Extract content
-        if (typeof assistantMessage.content === 'string') {
-          content = assistantMessage.content;
-        } else if (Array.isArray(assistantMessage.content)) {
-          const parts: string[] = [];
-          for (const block of assistantMessage.content as unknown[]) {
-            if (!block || typeof block !== 'object') {
-              continue;
-            }
-
-            const safeBlock = block as any;
-
-            if (safeBlock.type === 'text') {
-              const text = typeof safeBlock.text === 'string' ? safeBlock.text : '';
-              const trimmed = text.trim();
-              if (!trimmed) {
-                continue;
-              }
-
-              const isPlaceholderLine =
-                /^\[Tool:\s*/i.test(trimmed) ||
-                /^Using tool:/i.test(trimmed) ||
-                /^Tool result:/i.test(trimmed);
-
-              if (isPlaceholderLine) {
-                const shouldHandle = markPlaceholderHandled(sessionKey, trimmed);
-                if (shouldHandle) {
-                  try {
-                    await handleToolPlaceholderMessage(
-                      projectId,
-                      trimmed,
-                      requestId,
-                      undefined,
-                      { dedupeStore: persistedToolMessageSignatures }
-                    );
-                  } catch (error) {
-                    console.error('[ClaudeService] Failed to handle assistant tool placeholder:', error);
+                if (isPlaceholderLine) {
+                  const shouldHandle = markPlaceholderHandled(sessionKey, trimmedContent);
+                  if (shouldHandle) {
+                    try {
+                      await handleToolPlaceholderMessage(
+                        projectId,
+                        trimmedContent,
+                        requestId,
+                        undefined,
+                        { dedupeStore: persistedToolMessageSignatures }
+                      );
+                    } catch (error) {
+                      console.error('[ClaudeService] Failed to handle tool placeholder on stop:', error);
+                    }
                   }
                 }
+
+                if (
+                  trimmedContent.length === 0 ||
+                  isPlaceholderLine
+                ) {
+                  streamState.hasSentUpdate = false;
+                }
+
+                if (!streamState.hasSentUpdate) {
+                  streamState.content = '';
+                  assistantStreamStates.delete(sessionKey);
+                  break;
+                }
+
+                streamState.finalized = true;
+
+                const savedMessage = await createMessage({
+                  id: streamState.messageId,
+                  projectId,
+                  role: 'assistant',
+                  messageType: 'chat',
+                  content: streamState.content,
+                  cliSource: 'claude',
+                });
+
+                streamManager.publish(projectId, {
+                  type: 'message',
+                  data: serializeMessage(savedMessage, {
+                    isStreaming: false,
+                    isFinal: true,
+                    requestId,
+                  }),
+                });
+
+                completedStreamSessions.add(sessionKey);
+              }
+
+              assistantStreamStates.delete(sessionKey);
+              break;
+            }
+            default:
+              break;
+          }
+        } else if (message.type === 'system' && message.subtype === 'init') {
+          // Initialize session
+          currentSessionId = message.session_id;
+          console.log(`[ClaudeService] Session initialized: ${currentSessionId}`);
+
+          // Save session ID to project
+          if (currentSessionId) {
+            await updateProject(projectId, {
+              activeClaudeSessionId: currentSessionId,
+            });
+          }
+
+          // Send connection notification via SSE
+          streamManager.publish(projectId, {
+            type: 'connected',
+            data: {
+              projectId,
+              sessionId: currentSessionId,
+              timestamp: new Date().toISOString(),
+              connectionStage: 'assistant',
+            },
+          });
+        } else if (message.type === 'assistant') {
+          const sessionKey = (message.session_id ?? message.uuid ?? 'default').toString();
+          if (completedStreamSessions.has(sessionKey)) {
+            completedStreamSessions.delete(sessionKey);
+            return;
+          }
+
+          // Assistant message
+          const assistantMessage = message.message;
+          let content = '';
+
+          // Extract content
+          if (typeof assistantMessage.content === 'string') {
+            content = assistantMessage.content;
+          } else if (Array.isArray(assistantMessage.content)) {
+            const parts: string[] = [];
+            for (const block of assistantMessage.content as unknown[]) {
+              if (!block || typeof block !== 'object') {
                 continue;
               }
 
-              parts.push(text);
-              continue;
+              const safeBlock = block as any;
+
+              if (safeBlock.type === 'text') {
+                const text = typeof safeBlock.text === 'string' ? safeBlock.text : '';
+                const trimmed = text.trim();
+                if (!trimmed) {
+                  continue;
+                }
+
+                const isPlaceholderLine =
+                  /^\[Tool:\s*/i.test(trimmed) ||
+                  /^Using tool:/i.test(trimmed) ||
+                  /^Tool result:/i.test(trimmed);
+
+                if (isPlaceholderLine) {
+                  const shouldHandle = markPlaceholderHandled(sessionKey, trimmed);
+                  if (shouldHandle) {
+                    try {
+                      await handleToolPlaceholderMessage(
+                        projectId,
+                        trimmed,
+                        requestId,
+                        undefined,
+                        { dedupeStore: persistedToolMessageSignatures }
+                      );
+                    } catch (error) {
+                      console.error('[ClaudeService] Failed to handle assistant tool placeholder:', error);
+                    }
+                  }
+                  continue;
+                }
+
+                parts.push(text);
+                continue;
+              }
+
+              if (safeBlock.type === 'tool_use') {
+                const metadata = buildToolMetadata(safeBlock as Record<string, unknown>);
+                const name = typeof safeBlock.name === 'string' ? safeBlock.name : pickFirstString(safeBlock.name);
+                const toolContent = `Using tool: ${name ?? 'tool'}`;
+                await dispatchToolMessage({
+                  projectId,
+                  metadata,
+                  content: toolContent,
+                  requestId,
+                  persist: true,
+                  isStreaming: false,
+                  messageType: 'tool_use',
+                  dedupeKey: computeToolMessageSignature(metadata, toolContent, 'tool_use'),
+                  dedupeStore: persistedToolMessageSignatures,
+                });
+                continue;
+              }
             }
 
-            if (safeBlock.type === 'tool_use') {
-              const metadata = buildToolMetadata(safeBlock as Record<string, unknown>);
-              const name = typeof safeBlock.name === 'string' ? safeBlock.name : pickFirstString(safeBlock.name);
-              const toolContent = `Using tool: ${name ?? 'tool'}`;
-              await dispatchToolMessage({
-                projectId,
-                metadata,
-                content: toolContent,
-                requestId,
-                persist: true,
-                isStreaming: false,
-                messageType: 'tool_use',
-                dedupeKey: computeToolMessageSignature(metadata, toolContent, 'tool_use'),
-                dedupeStore: persistedToolMessageSignatures,
-              });
-              continue;
-            }
+            content = parts.join('\n');
           }
 
-          content = parts.join('\n');
+          console.log('[ClaudeService] Assistant message:', content.substring(0, 100));
+
+          // Save message to DB
+          if (content) {
+            const savedMessage = await createMessage({
+              projectId,
+              role: 'assistant',
+              messageType: 'chat',
+              content,
+              cliSource: 'claude',
+            });
+
+            // Send via SSE in real-time
+            streamManager.publish(projectId, {
+              type: 'message',
+              data: serializeMessage(savedMessage, { requestId }),
+            });
+          }
+        } else if (message.type === 'result') {
+          // Final result
+          console.log('[ClaudeService] Task completed:', message.subtype);
+
+          publishStatus('completed');
+          emittedCompletedStatus = true;
+          await safeMarkCompleted();
         }
-
-        console.log('[ClaudeService] Assistant message:', content.substring(0, 100));
-
-        // Save message to DB
-        if (content) {
-          const savedMessage = await createMessage({
-            projectId,
-            role: 'assistant',
-            messageType: 'chat',
-            content,
-            // sessionId is Session table foreign key, so don't store Claude SDK session ID
-            // Claude SDK session ID is stored in project.activeClaudeSessionId
-            cliSource: 'claude',
-          });
-
-          // Send via SSE in real-time
-          streamManager.publish(projectId, {
-            type: 'message',
-            data: serializeMessage(savedMessage, { requestId }),
-          });
-        }
-      } else if (message.type === 'result') {
-        // Final result
-        console.log('[ClaudeService] Task completed:', message.subtype);
-
-        publishStatus('completed');
-        emittedCompletedStatus = true;
-        await safeMarkCompleted();
       }
-    }
+    );
 
     console.log('[ClaudeService] Streaming completed');
     await safeMarkCompleted();
