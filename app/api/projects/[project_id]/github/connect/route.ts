@@ -1,13 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectProjectToGitHub } from '@/lib/services/github';
+import { withAuth, AuthError, getProjectWithOwnership } from '@/lib/middleware/auth';
 
 interface RouteContext {
   params: Promise<{ project_id: string }>;
 }
 
-export async function POST(request: NextRequest, { params }: RouteContext) {
+async function handler(request: NextRequest, userId: string, { params }: RouteContext) {
   try {
     const { project_id } = await params;
+    await getProjectWithOwnership(project_id, userId);
     const body = await request.json();
     if (!body || typeof body !== 'object') {
       return NextResponse.json({ success: false, error: 'Invalid payload' }, { status: 400 });
@@ -36,6 +38,9 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
       message: 'GitHub repository created and connected',
     });
   } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ success: false, error: error.message }, { status: error.statusCode });
+    }
     console.error('[API] Failed to connect GitHub repository:', error);
     const status = error instanceof Error && 'status' in error ? (error as any).status ?? 500 : 500;
     return NextResponse.json(
@@ -48,6 +53,8 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
     );
   }
 }
+
+export const POST = withAuth(handler);
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
