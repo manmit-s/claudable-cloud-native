@@ -1,0 +1,8 @@
+{
+  "name": "claudable-runner",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.68"
+  }
+}

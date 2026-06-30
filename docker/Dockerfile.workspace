@@ -1,0 +1,23 @@
+FROM node:20-slim
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    git make g++ python3 curl tar gzip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Claude Code globally
+RUN npm install -g @anthropic-ai/claude-code
+
+# Create runner folder and install runner packages
+WORKDIR /runner
+COPY docker/package.json /runner/package.json
+RUN npm install
+
+# Copy runner script
+COPY docker/container-runner.js /runner/runner.js
+
+# Set workspace directory
+WORKDIR /workspace
+EXPOSE 3000
+
+CMD ["tail", "-f", "/dev/null"]
