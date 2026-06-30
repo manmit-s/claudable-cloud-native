@@ -1,11 +1,12 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { checkVercelProjectAvailability } from '@/lib/services/vercel';
+import { withAuth, AuthError } from '@/lib/middleware/auth';
 
 interface RouteContext {
   params: Promise<{ name: string }>;
 }
 
-export async function GET(request: Request, { params }: RouteContext) {
+async function getHandler(request: NextRequest, userId: string, { params }: RouteContext) {
   try {
     const { name } = await params;
     const url = new URL(request.url);
@@ -16,6 +17,9 @@ export async function GET(request: Request, { params }: RouteContext) {
     const result = await checkVercelProjectAvailability(name, { teamId });
     return NextResponse.json(result);
   } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ success: false, error: error.message }, { status: error.statusCode });
+    }
     console.error('[API] Failed to check Vercel project availability:', error);
     const status = error instanceof Error && 'status' in error ? (error as any).status ?? 500 : 500;
     return NextResponse.json(
@@ -28,6 +32,8 @@ export async function GET(request: Request, { params }: RouteContext) {
     );
   }
 }
+
+export const GET = withAuth(getHandler);
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
