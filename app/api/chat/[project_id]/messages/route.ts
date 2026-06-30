@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getMessagesByProjectId, createMessage, deleteMessagesByProjectId, getMessagesCountByProjectId } from '@/lib/services/message';
 import type { CreateMessageInput } from '@/types/backend';
 import { serializeMessages, serializeMessage } from '@/lib/serializers/chat';
+import { withAuth, AuthError, getProjectWithOwnership } from '@/lib/middleware/auth';
 
 interface RouteContext {
   params: Promise<{ project_id: string }>;
@@ -16,12 +17,15 @@ interface RouteContext {
  * GET /api/chat/[project_id]/messages
  * Get project message history
  */
-export async function GET(
+async function getHandler(
   request: NextRequest,
+  userId: string,
   { params }: RouteContext
 ) {
   try {
     const { project_id } = await params;
+    // Verify project ownership before exposing message history
+    await getProjectWithOwnership(project_id, userId);
     const { searchParams } = new URL(request.url);
     const limit = parseInt(searchParams.get('limit') || '50');
     const offset = parseInt(searchParams.get('offset') || '0');
@@ -46,6 +50,9 @@ export async function GET(
     res.headers.set('Cache-Control', 'no-store');
     return res;
   } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ success: false, error: error.message }, { status: error.statusCode });
+    }
     console.error('[API] Failed to get messages:', error);
     return NextResponse.json(
       {
@@ -62,12 +69,15 @@ export async function GET(
  * POST /api/chat/[project_id]/messages
  * Create new message (for system/user logging)
  */
-export async function POST(
+async function postHandler(
   request: NextRequest,
+  userId: string,
   { params }: RouteContext
 ) {
   try {
     const { project_id } = await params;
+    // Verify project ownership before creating a message
+    await getProjectWithOwnership(project_id, userId);
     const payload = await request.json();
 
     const content =
@@ -127,6 +137,9 @@ export async function POST(
     res.headers.set('Cache-Control', 'no-store');
     return res;
   } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ success: false, error: error.message }, { status: error.statusCode });
+    }
     console.error('[API] Failed to create message:', error);
     return NextResponse.json(
       {
@@ -143,12 +156,15 @@ export async function POST(
  * DELETE /api/chat/[project_id]/messages
  * Delete all messages (optionally filter by conversation)
  */
-export async function DELETE(
+async function deleteHandler(
   request: NextRequest,
+  userId: string,
   { params }: RouteContext
 ) {
   try {
     const { project_id } = await params;
+    // Verify project ownership before deleting
+    await getProjectWithOwnership(project_id, userId);
     const { searchParams } = new URL(request.url);
     const conversationId =
       searchParams.get('conversationId') ?? searchParams.get('conversation_id') ?? undefined;
@@ -160,6 +176,9 @@ export async function DELETE(
       deleted,
     });
   } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ success: false, error: error.message }, { status: error.statusCode });
+    }
     console.error('[API] Failed to delete messages:', error);
     return NextResponse.json(
       {
@@ -171,6 +190,10 @@ export async function DELETE(
     );
   }
 }
+
+export const GET = withAuth(getHandler);
+export const POST = withAuth(postHandler);
+export const DELETE = withAuth(deleteHandler);
 
 
 // Force dynamic and Node runtime to avoid caching and ensure DB freshness
