@@ -1,7 +1,7 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import fs from 'fs/promises';
 import path from 'path';
-import { getProjectById } from '@/lib/services/project';
+import { withAuth, getProjectWithOwnership, AuthError } from '@/lib/middleware/auth';
 
 interface RouteContext {
   params: Promise<{ project_id: string }>;
@@ -12,13 +12,10 @@ const PROJECTS_DIR_ABSOLUTE = path.isAbsolute(PROJECTS_DIR)
   ? PROJECTS_DIR
   : path.resolve(process.cwd(), PROJECTS_DIR);
 
-export async function POST(request: Request, { params }: RouteContext) {
+async function postHandler(request: NextRequest, userId: string, { params }: RouteContext) {
   try {
     const { project_id } = await params;
-    const project = await getProjectById(project_id);
-    if (!project) {
-      return NextResponse.json({ success: false, error: 'Project not found' }, { status: 404 });
-    }
+    await getProjectWithOwnership(project_id, userId);
 
     const body = await request.json();
     const b64 = typeof body?.b64_png === 'string' ? body.b64_png : null;
@@ -34,6 +31,9 @@ export async function POST(request: Request, { params }: RouteContext) {
 
     return NextResponse.json({ success: true, path: 'assets/logo.png' });
   } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ success: false, error: error.message }, { status: error.statusCode });
+    }
     console.error('[Assets Logo] Failed:', error);
     return NextResponse.json(
       {
@@ -45,6 +45,8 @@ export async function POST(request: Request, { params }: RouteContext) {
     );
   }
 }
+
+export const POST = withAuth(postHandler);
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
