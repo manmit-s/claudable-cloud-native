@@ -1,11 +1,12 @@
 import { NextResponse } from 'next/server';
 import { checkRepositoryAvailability } from '@/lib/services/github';
+import { withAuth } from '@/lib/middleware/auth';
 
 interface RouteContext {
   params: Promise<{ repo_name: string }>;
 }
 
-export async function GET(_request: Request, { params }: RouteContext) {
+async function handler(_request: Request, _userId: string, { params }: RouteContext) {
   try {
     const { repo_name } = await params;
     const result = await checkRepositoryAvailability(repo_name);
@@ -26,6 +27,8 @@ export async function GET(_request: Request, { params }: RouteContext) {
     );
   }
 }
+
+export const GET = withAuth(handler);
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
