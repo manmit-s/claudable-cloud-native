@@ -5,6 +5,7 @@ import {
   getServiceToken,
   touchServiceToken,
 } from '@/lib/services/tokens';
+import { withAuth, AuthError } from '@/lib/middleware/auth';
 
 interface RouteContext {
   params: Promise<{ segments?: string[] }>;
@@ -14,7 +15,7 @@ function isProvider(value: string): boolean {
   return value === 'github' || value === 'supabase' || value === 'vercel';
 }
 
-export async function GET(request: NextRequest, { params }: RouteContext) {
+async function getHandler(request: NextRequest, userId: string, { params }: RouteContext) {
   const { segments = [] } = await params;
 
   if (segments.length === 1) {
@@ -55,7 +56,7 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
   return NextResponse.json({ success: false, error: 'Not found' }, { status: 404 });
 }
 
-export async function DELETE(_request: NextRequest, { params }: RouteContext) {
+async function deleteHandler(_request: NextRequest, userId: string, { params }: RouteContext) {
   const { segments = [] } = await params;
 
   if (segments.length !== 1) {
@@ -70,6 +71,9 @@ export async function DELETE(_request: NextRequest, { params }: RouteContext) {
 
   return NextResponse.json({ success: true, message: 'Token deleted successfully' });
 }
+
+export const GET = withAuth(getHandler);
+export const DELETE = withAuth(deleteHandler);
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
