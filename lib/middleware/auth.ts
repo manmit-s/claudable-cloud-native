@@ -74,9 +74,9 @@ export async function getOptionalUserId(request: NextRequest): Promise<string | 
  * Automatically handles authentication and injects userId
  */
 export function withAuth<T extends any[]>(
-  handler: (request: NextRequest, userId: string, ...args: T) => Promise<NextResponse>
+  handler: (request: NextRequest, userId: string, ...args: T) => Promise<Response>
 ) {
-  return async (request: NextRequest, ...args: T): Promise<NextResponse> => {
+  return async (request: NextRequest, ...args: T): Promise<Response> => {
     try {
       const userId = await getAuthenticatedUserId(request);
       return await handler(request, userId, ...args);
@@ -100,9 +100,9 @@ export function withAuth<T extends any[]>(
  * Middleware wrapper for optional authentication
  */
 export function withOptionalAuth<T extends any[]>(
-  handler: (request: NextRequest, userId: string | null, ...args: T) => Promise<NextResponse>
+  handler: (request: NextRequest, userId: string | null, ...args: T) => Promise<Response>
 ) {
-  return async (request: NextRequest, ...args: T): Promise<NextResponse> => {
+  return async (request: NextRequest, ...args: T): Promise<Response> => {
     try {
       const userId = await getOptionalUserId(request);
       return await handler(request, userId, ...args);
