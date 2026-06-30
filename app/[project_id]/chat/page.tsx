@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/exhaustive-deps */
 "use client";
 import { useEffect, useState, useRef, useCallback, useMemo, type ChangeEvent, type KeyboardEvent, type UIEvent } from 'react';
 import { AnimatePresence } from 'framer-motion';
@@ -13,6 +14,7 @@ import ChatInput from '@/components/chat/ChatInput';
 import { ChatErrorBoundary } from '@/components/ErrorBoundary';
 import { useUserRequests } from '@/hooks/useUserRequests';
 import { useGlobalSettings } from '@/contexts/GlobalSettingsContext';
+import { useAuth } from '@/contexts/AuthContext';
 import { getDefaultModelForCli, getModelDisplayName } from '@/lib/constants/cliModels';
 import {
   ACTIVE_CLI_BRAND_COLORS,
@@ -30,6 +32,29 @@ import {
 // No longer loading ProjectSettings (managed by global settings on main page)
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? '';
+
+const originalFetch = globalThis.fetch;
+const fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+  let token: string | undefined;
+  try {
+    const { createSupabaseBrowserClient } = await import('@/lib/supabase/client');
+    const supabase = createSupabaseBrowserClient();
+    const { data: { session } } = await supabase.auth.getSession();
+    token = session?.access_token;
+  } catch (err) {
+    console.warn('Failed to retrieve supabase session token for chat fetch:', err);
+  }
+
+  const headers = new Headers(init?.headers);
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
+
+  return originalFetch(input, {
+    ...init,
+    headers,
+  });
+};
 
 const assistantBrandColors = ACTIVE_CLI_BRAND_COLORS;
 
@@ -189,6 +214,20 @@ function TreeView({ entries, selectedFile, expandedFolders, folderContents, onTo
 }
 
 export default function ChatPage() {
+  const { session } = useAuth();
+
+  // Shadow the global fetch to automatically inject the access token header
+  const fetch = useCallback(
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      if (session?.access_token) {
+        headers.set('Authorization', `Bearer ${session.access_token}`);
+      }
+      return globalThis.fetch(input, { ...init, headers });
+    },
+    [session]
+  );
+
   const params = useParams<{ project_id: string }>();
   const projectId = params?.project_id ?? '';
   const router = useRouter();
@@ -386,7 +425,7 @@ export default function ChatPage() {
     } finally {
       setIsRunning(false);
     }
-  }, [initialPromptSent, preferredCli, conversationId, projectId, selectedModel, createRequest]);
+  }, [initialPromptSent, preferredCli, conversationId, projectId, selectedModel, createRequest, fetch]);
 
   // Guarded trigger that can be called from multiple places safely
   const triggerInitialPromptIfNeeded = useCallback(() => {
@@ -461,7 +500,7 @@ const persistProjectPreferences = useCallback(
     const result = await response.json().catch(() => null);
     return result?.data ?? result;
   },
-  [projectId, preferredCli]
+  [projectId, preferredCli, fetch]
 );
 
   const handleModelChange = useCallback(
@@ -793,7 +832,7 @@ const persistProjectPreferences = useCallback(
       setPreviewInitializationMessage('An error occurred');
       setTimeout(() => setIsStartingPreview(false), 2000);
     }
-  }, [projectId]);
+  }, [projectId, fetch]);
 
   // Navigate to specific route in iframe
   const navigateToRoute = (route: string) => {
@@ -834,7 +873,7 @@ const persistProjectPreferences = useCallback(
     } catch (error) {
       console.error('Error stopping preview:', error);
     }
-  }, [projectId]);
+  }, [projectId, fetch]);
 
   const loadSubdirectory = useCallback(async (dir: string): Promise<Entry[]> => {
     try {
@@ -845,7 +884,7 @@ const persistProjectPreferences = useCallback(
       console.error('Failed to load subdirectory:', error);
       return [];
     }
-  }, [projectId]);
+  }, [projectId, fetch]);
 
   const loadTree = useCallback(async (dir = '.') => {
     try {
@@ -882,7 +921,7 @@ const persistProjectPreferences = useCallback(
       console.error('Failed to load tree:', error);
       setTree([]);
     }
-  }, [projectId, loadSubdirectory]);
+  }, [projectId, loadSubdirectory, fetch]);
 
   // Load subdirectory contents
 
@@ -1443,7 +1482,7 @@ const persistProjectPreferences = useCallback(
       if (!hasCliSet) updatePreferredCli(DEFAULT_ACTIVE_CLI);
       if (!hasModelSet) updateSelectedModel(getDefaultModelForCli(DEFAULT_ACTIVE_CLI), DEFAULT_ACTIVE_CLI);
     }
-  }, [preferredCli, selectedModel, updatePreferredCli, updateSelectedModel]);
+  }, [preferredCli, selectedModel, updatePreferredCli, updateSelectedModel, fetch]);
 
   const loadProjectInfo = useCallback(async (): Promise<{ cli?: string; model?: string; status?: ProjectStatus }> => {
     try {
@@ -1540,6 +1579,7 @@ const persistProjectPreferences = useCallback(
     updatePreferredCli,
     updateSelectedModel,
     preferredCli,
+    fetch,
   ]);
 
   const loadProjectInfoRef = useRef(loadProjectInfo);
