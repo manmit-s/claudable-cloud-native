@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createRepository, getGithubUser } from '@/lib/services/github';
+import { withAuth } from '@/lib/middleware/auth';
 
-export async function POST(request: NextRequest) {
+async function handler(request: NextRequest, _userId: string) {
   try {
     const body = await request.json();
     if (!body || typeof body !== 'object') {
@@ -45,6 +46,8 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+
+export const POST = withAuth(handler);
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
