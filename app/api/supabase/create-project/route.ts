@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createSupabaseProject } from '@/lib/services/supabase';
+import { withAuth, AuthError } from '@/lib/middleware/auth';
 
-export async function POST(request: NextRequest) {
+async function postHandler(request: NextRequest, userId: string) {
   try {
     const body = await request.json();
     const projectId =
@@ -42,6 +43,9 @@ export async function POST(request: NextRequest) {
       created_at: result.inserted_at ?? result.created_at ?? new Date().toISOString(),
     });
   } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ success: false, error: error.message }, { status: error.statusCode });
+    }
     console.error('[API] Failed to create Supabase project:', error);
     const status = error instanceof Error && 'status' in error ? (error as any).status ?? 500 : 500;
     return NextResponse.json(
@@ -54,6 +58,8 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+
+export const POST = withAuth(postHandler);
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
