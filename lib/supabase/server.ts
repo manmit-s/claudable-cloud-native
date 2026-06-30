@@ -12,15 +12,17 @@ import { supabaseUrl, supabaseAnonKey, supabaseServiceRoleKey } from './client';
  * Uses the service role key for admin operations
  */
 export function createSupabaseServerClient() {
-  const cookieStore = cookies();
+  const cookieStorePromise = cookies();
 
   return createServerClient(supabaseUrl, supabaseServiceRoleKey, {
     cookies: {
-      get(name: string) {
+      async get(name: string) {
+        const cookieStore = await cookieStorePromise;
         return cookieStore.get(name)?.value;
       },
-      set(name: string, value: string, options: CookieOptions) {
+      async set(name: string, value: string, options: CookieOptions) {
         try {
+          const cookieStore = await cookieStorePromise;
           cookieStore.set({ name, value, ...options });
         } catch (error) {
           // The `set` method was called from a Server Component.
@@ -28,8 +30,9 @@ export function createSupabaseServerClient() {
           // user sessions.
         }
       },
-      remove(name: string, options: CookieOptions) {
+      async remove(name: string, options: CookieOptions) {
         try {
+          const cookieStore = await cookieStorePromise;
           cookieStore.set({ name, value: '', ...options });
         } catch (error) {
           // The `delete` method was called from a Server Component.
