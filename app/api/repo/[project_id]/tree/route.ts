@@ -5,18 +5,20 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { listProjectDirectory, FileBrowserError } from '@/lib/services/file-browser';
+import { withAuth, getProjectWithOwnership, AuthError } from '@/lib/middleware/auth';
 
 interface RouteContext {
   params: Promise<{ project_id: string }>;
 }
 
-export async function GET(request: NextRequest, { params }: RouteContext) {
+async function getHandler(request: NextRequest, userId: string, { params }: RouteContext) {
   try {
     const { project_id } = await params;
+    await getProjectWithOwnership(project_id, userId);
     const { searchParams } = new URL(request.url);
     const dir = searchParams.get('dir') ?? '.';
 
-    const entries = await listProjectDirectory(project_id, dir);
+    const entries = await listProjectDirectory(project_id, dir, userId);
 
     const payload = entries.map((entry) => ({
       path: entry.path,
@@ -29,6 +31,9 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
     response.headers.set('Cache-Control', 'no-store');
     return response;
   } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ error: error.message }, { status: error.statusCode });
+    }
     if (error instanceof FileBrowserError) {
       return NextResponse.json(
         { error: error.message },
@@ -43,6 +48,8 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
     );
   }
 }
+
+export const GET = withAuth(getHandler);
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
