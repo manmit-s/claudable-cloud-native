@@ -1,11 +1,12 @@
 import { NextResponse } from 'next/server';
 import { getSessionById } from '@/lib/services/chat-sessions';
+import { withAuth } from '@/lib/middleware/auth';
 
 interface RouteContext {
   params: Promise<{ project_id: string; session_id: string }>;
 }
 
-export async function GET(_request: Request, { params }: RouteContext) {
+async function handler(_request: Request, _userId: string, { params }: RouteContext) {
   try {
     const { project_id, session_id } = await params;
     const session = await getSessionById(project_id, session_id);
@@ -26,6 +27,8 @@ export async function GET(_request: Request, { params }: RouteContext) {
     );
   }
 }
+
+export const GET = withAuth(handler);
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
