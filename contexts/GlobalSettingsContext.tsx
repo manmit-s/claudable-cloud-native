@@ -1,6 +1,7 @@
 "use client";
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { getDefaultModelForCli } from '@/lib/constants/cliModels';
+import { useAuth } from '@/contexts/AuthContext';
 
 export type GlobalAISettings = {
   default_cli: string;
@@ -39,11 +40,17 @@ export function useGlobalSettings() {
 
 export default function GlobalSettingsProvider({ children }: { children: React.ReactNode }) {
   const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? '';
+  const { session, loading } = useAuth();
   const [settings, setSettings] = useState<GlobalAISettings>(defaultSettings);
 
   const refresh = useCallback(async () => {
+    if (!session) return;
     try {
-      const res = await fetch(`${API_BASE}/api/settings/global`);
+      const res = await fetch(`${API_BASE}/api/settings/global`, {
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`
+        }
+      });
       if (res.ok) {
         const s = await res.json();
         setSettings(s);
@@ -51,12 +58,14 @@ export default function GlobalSettingsProvider({ children }: { children: React.R
     } catch (e) {
       console.warn('Failed to refresh global settings', e);
     }
-  }, [API_BASE]);
+  }, [API_BASE, session]);
 
-  // Load once on mount
+  // Load once on mount/auth resolve
   useEffect(() => {
-    refresh();
-  }, [refresh]);
+    if (!loading && session) {
+      refresh();
+    }
+  }, [loading, session, refresh]);
 
   const value = useMemo(() => ({ settings, setSettings, refresh }), [settings, refresh]);
 
