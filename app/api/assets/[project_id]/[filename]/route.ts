@@ -1,7 +1,8 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import fs from 'fs/promises';
 import path from 'path';
-import { getProjectById } from '@/lib/services/project';
+import { createSupabaseServerClientWithToken } from '@/lib/supabase/server';
+import { prisma } from '@/lib/db/client';
 
 interface RouteContext {
   params: Promise<{ project_id: string; filename: string }>;
@@ -31,23 +32,47 @@ function inferContentType(filename: string): string {
   }
 }
 
-export async function GET(_request: Request, { params }: RouteContext) {
+export async function GET(request: NextRequest, { params }: RouteContext) {
   const { project_id, filename } = await params;
 
   try {
+    // Authenticate user via header or query param
+    const authHeader = request.headers.get('Authorization');
+    const { searchParams } = new URL(request.url);
+    const token = authHeader?.startsWith('Bearer ')
+      ? authHeader.replace('Bearer ', '')
+      : searchParams.get('token');
+
+    if (!token) {
+      return NextResponse.json({ success: false, error: 'Unauthorized: Token required' }, { status: 401 });
+    }
+
+    const supabase = createSupabaseServerClientWithToken(token);
+    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+    if (authError || !user) {
+      return NextResponse.json({ success: false, error: 'Unauthorized: Invalid token' }, { status: 401 });
+    }
+
+    // Verify project ownership
+    const project = await prisma.project.findUnique({
+      where: { id: project_id },
+      select: { userId: true },
+    });
+
+    if (!project) {
+      return NextResponse.json({ success: false, error: 'Project not found' }, { status: 404 });
+    }
+
+    if (project.userId !== user.id) {
+      return NextResponse.json({ success: false, error: 'Forbidden: You do not own this project' }, { status: 403 });
+    }
 
     console.log('📸 Asset serving request:', {
       project_id,
       filename,
       projectsDir: PROJECTS_DIR,
-      userAgent: _request.headers.get('user-agent')
+      userAgent: request.headers.get('user-agent')
     });
-
-    const project = await getProjectById(project_id);
-    if (!project) {
-      console.log('📸 Asset serving failed: Project not found:', project_id);
-      return NextResponse.json({ success: false, error: 'Project not found' }, { status: 404 });
-    }
 
     const filePath = path.join(PROJECTS_DIR_ABSOLUTE, project_id, 'assets', filename);
     console.log('📸 Checking file path:', {
