@@ -6,6 +6,7 @@ import CreateProjectModal from '@/components/modals/CreateProjectModal';
 import DeleteProjectModal from '@/components/modals/DeleteProjectModal';
 import GlobalSettings from '@/components/settings/GlobalSettings';
 import { useGlobalSettings } from '@/contexts/GlobalSettingsContext';
+import { useAuth } from '@/contexts/AuthContext';
 import { getDefaultModelForCli, getModelDisplayName } from '@/lib/constants/cliModels';
 import Image from 'next/image';
 import { Image as ImageIcon } from 'lucide-react';
@@ -23,8 +24,27 @@ import {
   type ActiveCliId,
 } from '@/lib/utils/cliOptions';
 
-// Ensure fetch is available
-const fetchAPI = globalThis.fetch || fetch;
+const fetchAPI = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+  let token: string | undefined;
+  try {
+    const { createSupabaseBrowserClient } = await import('@/lib/supabase/client');
+    const supabase = createSupabaseBrowserClient();
+    const { data: { session } } = await supabase.auth.getSession();
+    token = session?.access_token;
+  } catch (err) {
+    console.warn('Failed to retrieve supabase session token:', err);
+  }
+
+  const headers = new Headers(init?.headers);
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
+
+  return fetch(input, {
+    ...init,
+    headers,
+  });
+};
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? '';
 
@@ -40,6 +60,20 @@ const assistantBrandColors = ACTIVE_CLI_BRAND_COLORS;
 const MODEL_OPTIONS_BY_ASSISTANT = ACTIVE_CLI_MODEL_OPTIONS;
 
 export default function HomePage() {
+  const { session, loading: authLoading } = useAuth();
+  
+  // Shadow the fetchAPI to inject Bearer tokens from the active Supabase session
+  const fetchAPI = useCallback(
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      if (session?.access_token) {
+        headers.set('Authorization', `Bearer ${session.access_token}`);
+      }
+      return fetch(input, { ...init, headers });
+    },
+    [session]
+  );
+
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [showCreate, setShowCreate] = useState(false);
   const [showGlobalSettings, setShowGlobalSettings] = useState(false);
@@ -166,8 +200,10 @@ export default function HomePage() {
   const assistantDropdownRef = useRef<HTMLDivElement>(null);
   const modelDropdownRef = useRef<HTMLDivElement>(null);
 
-  // Check CLI installation status
+  // Check CLI installation status once authenticated
   useEffect(() => {
+    if (authLoading) return;
+
     const checkingStatus = ASSISTANT_OPTIONS.reduce<CLIStatus>((acc, cli) => {
       acc[cli.id] = {
         installed: false,
@@ -179,13 +215,13 @@ export default function HomePage() {
     }, {});
     setCLIStatus(checkingStatus);
 
-    fetchCliStatusSnapshot()
+    fetchCliStatusSnapshot(session?.access_token)
       .then((status) => setCLIStatus(status))
       .catch((error) => {
         console.error('Failed to check CLI status:', error);
         setCLIStatus(createCliStatusFallback());
       });
-  }, []);
+  }, [session, authLoading]);
 
   // Click outside handler
   useEffect(() => {
@@ -307,7 +343,7 @@ export default function HomePage() {
       console.warn('Failed to load projects:', error);
       setProjects([]);
     }
-  }, [normalizeProjectPayload]);
+  }, [normalizeProjectPayload, fetchAPI]);
   
   async function onCreated() { await load(); }
   
