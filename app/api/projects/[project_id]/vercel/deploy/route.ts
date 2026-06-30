@@ -1,13 +1,15 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { triggerVercelDeployment } from '@/lib/services/vercel';
+import { withAuth, getProjectWithOwnership, AuthError } from '@/lib/middleware/auth';
 
 interface RouteContext {
   params: Promise<{ project_id: string }>;
 }
 
-export async function POST(_request: Request, { params }: RouteContext) {
+async function postHandler(_request: NextRequest, userId: string, { params }: RouteContext) {
   try {
     const { project_id } = await params;
+    await getProjectWithOwnership(project_id, userId);
     const result = await triggerVercelDeployment(project_id);
     return NextResponse.json({
       success: true,
@@ -16,6 +18,9 @@ export async function POST(_request: Request, { params }: RouteContext) {
       status: result.status ?? null,
     });
   } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ success: false, error: error.message }, { status: error.statusCode });
+    }
     console.error('[API] Failed to trigger Vercel deployment:', error);
     const status = error instanceof Error && 'status' in error ? (error as any).status ?? 500 : 500;
     return NextResponse.json(
@@ -28,6 +33,8 @@ export async function POST(_request: Request, { params }: RouteContext) {
     );
   }
 }
+
+export const POST = withAuth(postHandler);
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
