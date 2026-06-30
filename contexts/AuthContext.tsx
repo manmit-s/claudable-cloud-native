@@ -1,6 +1,7 @@
 "use client";
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import { User, Session, AuthError } from '@supabase/supabase-js';
+import { useRouter, usePathname } from 'next/navigation';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 
 interface AuthContextType {
@@ -13,6 +14,27 @@ interface AuthContextType {
   refreshSession: () => Promise<void>;
 }
 
+// Routes that don't require authentication
+const PUBLIC_PATHS = ['/login'];
+
+let clientAccessToken: string | null = null;
+
+if (typeof window !== 'undefined' && !(window as any).__fetch_intercepted__) {
+  (window as any).__fetch_intercepted__ = true;
+  const originalFetch = window.fetch;
+  window.fetch = async (input, init) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+    if ((url.startsWith('/') || url.includes('/api/')) && clientAccessToken) {
+      const headers = new Headers(init?.headers);
+      if (!headers.has('Authorization')) {
+        headers.set('Authorization', `Bearer ${clientAccessToken}`);
+      }
+      return originalFetch(input, { ...init, headers });
+    }
+    return originalFetch(input, init);
+  };
+}
+
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -21,12 +43,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   const supabase = createSupabaseBrowserClient();
+  const router = useRouter();
+  const pathname = usePathname();
 
   useEffect(() => {
     // Get initial session
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       setUser(session?.user ?? null);
+      clientAccessToken = session?.access_token ?? null;
       setLoading(false);
     });
 
@@ -34,11 +59,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
       setUser(session?.user ?? null);
+      clientAccessToken = session?.access_token ?? null;
       setLoading(false);
     });
 
     return () => subscription.unsubscribe();
   }, [supabase]);
+
+  // Client-side guard: redirect unauthenticated users away from private pages.
+  useEffect(() => {
+    if (loading) return;
+
+    const isPublic = PUBLIC_PATHS.some(
+      (p) => pathname === p || pathname?.startsWith(`${p}/`),
+    );
+
+    if (!session && !isPublic) {
+      const redirect = pathname ? `?redirect=${encodeURIComponent(pathname)}` : '';
+      router.replace(`/login${redirect}`);
+    } else if (session && isPublic) {
+      // Already signed in - bounce away from /login
+      router.replace('/');
+    }
+  }, [session, loading, pathname, router]);
 
   const signIn = async (email: string, password: string) => {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
