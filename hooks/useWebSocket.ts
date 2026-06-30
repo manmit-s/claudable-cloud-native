@@ -3,6 +3,7 @@
  * Manages WebSocket connection for real-time updates
  */
 import { useEffect, useRef, useCallback, useState } from 'react';
+import { useAuth } from '@/contexts/AuthContext';
 import { WEBSOCKET_CONFIG } from '@/lib/config/constants';
 import type { ChatMessage, RealtimeEvent, RealtimeStatus } from '@/types';
 
@@ -23,6 +24,12 @@ export function useWebSocket({
   onDisconnect,
   onError
 }: WebSocketOptions) {
+  const { session } = useAuth();
+  const tokenRef = useRef<string | null>(null);
+  useEffect(() => {
+    tokenRef.current = session?.access_token ?? null;
+  }, [session]);
+
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const heartbeatIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -126,9 +133,18 @@ export function useWebSocket({
       throw new Error('HTTP base URL is not available');
     };
 
-    const openWebSocket = () => {
+    const openWebSocket = (token?: string) => {
       setIsConnecting(true);
-      const ws = new WebSocket(resolveWebSocketUrl());
+      let wsUrl = resolveWebSocketUrl();
+      if (token) {
+        const base = typeof window !== 'undefined' 
+          ? window.location.origin.replace(/^http/, 'ws') 
+          : 'ws://localhost';
+        const urlObj = new URL(wsUrl, base);
+        urlObj.searchParams.set('token', token);
+        wsUrl = urlObj.toString();
+      }
+      const ws = new WebSocket(wsUrl);
       manualCloseRef.current = false;
 
       ws.onopen = () => {
@@ -268,16 +284,22 @@ export function useWebSocket({
 
     // Warm up the API route to ensure server-side WS upgrade handler is attached
     (async () => {
+      const token = tokenRef.current ?? undefined;
+
       try {
         const warmupUrl = resolveHttpWarmupUrl();
-        await fetch(warmupUrl, { method: 'GET', headers: { 'x-ws-warmup': '1' } });
+        const headers: Record<string, string> = { 'x-ws-warmup': '1' };
+        if (token) {
+          headers['Authorization'] = `Bearer ${token}`;
+        }
+        await fetch(warmupUrl, { method: 'GET', headers });
         // Wait a bit for the upgrade handler to be fully attached
         await new Promise(resolve => setTimeout(resolve, 100));
       } catch {
         // Warm-up is best-effort; proceed regardless
       } finally {
         try {
-          openWebSocket();
+          openWebSocket(token);
         } catch (error) {
           setIsConnecting(false);
           console.error('Failed to create WebSocket connection:', error);
