@@ -8,6 +8,12 @@ import fs from 'fs/promises';
 import { findAvailablePort } from '@/lib/utils/ports';
 import { getProjectById, updateProject, updateProjectStatus } from './project';
 import { scaffoldBasicNextApp } from '@/lib/utils/scaffold';
+import {
+  startWorkspace,
+  getWorkspacePort,
+  startPreviewInWorkspace,
+  stopPreviewInWorkspace
+} from './container-workspace';
 import { PREVIEW_CONFIG } from '@/lib/config/constants';
 
 const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
@@ -831,33 +837,27 @@ class PreviewManager {
 
     flushPendingLogs();
 
-    if (overrides.port && overrides.port !== previewProcess.port) {
-      previewProcess.port = overrides.port;
-      env.PORT = String(overrides.port);
-      env.WEB_PORT = String(overrides.port);
-      log(
-        Buffer.from(
-          `[PreviewManager] Detected project-specified port ${overrides.port}.`
-        )
-      );
+    const apiKey = process.env.ANTHROPIC_API_KEY || '';
+    await startWorkspace(projectId, apiKey);
+    const workspacePort = await getWorkspacePort(projectId);
+    if (!workspacePort) {
+      throw new Error(`Failed to retrieve preview port for workspace claudable-ws-${projectId}`);
     }
 
-    const effectivePort = previewProcess.port;
-    let resolvedUrl: string = `http://localhost:${effectivePort}`;
-    if (typeof overrides.url === 'string' && overrides.url.trim().length > 0) {
-      resolvedUrl = overrides.url.trim();
-    }
-
+    previewProcess.port = workspacePort;
+    const resolvedUrl = `http://localhost:${workspacePort}`;
     env.NEXT_PUBLIC_APP_URL = resolvedUrl;
     previewProcess.url = resolvedUrl;
 
+    log(Buffer.from(`[PreviewManager] Starting development server inside container...`));
+    await startPreviewInWorkspace(projectId);
+
+    log(Buffer.from(`[PreviewManager] Connecting to container log stream...`));
+
     const child = spawn(
-      npmCommand,
-      ['run', 'dev', '--', '--port', String(effectivePort)],
+      'docker',
+      ['logs', '--tail', '100', '-f', `claudable-ws-${projectId}`],
       {
-        cwd: projectPath,
-        env,
-        shell: process.platform === 'win32',
         stdio: ['ignore', 'pipe', 'pipe'],
       }
     );
@@ -936,6 +936,7 @@ class PreviewManager {
 
     try {
       processInfo.process?.kill('SIGTERM');
+      await stopPreviewInWorkspace(projectId);
     } catch (error) {
       console.error('[PreviewManager] Failed to stop preview process:', error);
     }
