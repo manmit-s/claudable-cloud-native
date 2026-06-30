@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface UseUserRequestsOptions {
   projectId: string;
@@ -10,6 +11,20 @@ interface ActiveRequestsResponse {
 }
 
 export function useUserRequests({ projectId }: UseUserRequestsOptions) {
+  const { session } = useAuth();
+
+  // Shadow the global fetch to automatically inject the access token header
+  const fetch = useCallback(
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      if (session?.access_token) {
+        headers.set('Authorization', `Bearer ${session.access_token}`);
+      }
+      return globalThis.fetch(input, { ...init, headers });
+    },
+    [session]
+  );
+
   const [hasActiveRequests, setHasActiveRequests] = useState(false);
   const [activeCount, setActiveCount] = useState(0);
   const [isTabVisible, setIsTabVisible] = useState(true); // Default to true
@@ -111,7 +126,7 @@ export function useUserRequests({ projectId }: UseUserRequestsOptions) {
         console.warn('[UserRequests] Failed to check active requests (network issue):', error);
       }
     }
-  }, [projectId, isTabVisible, setFromActiveSet]);
+  }, [projectId, isTabVisible, setFromActiveSet, fetch]);
 
   // Adaptive polling configuration
   useEffect(() => {
