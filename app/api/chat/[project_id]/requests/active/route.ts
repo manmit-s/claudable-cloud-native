@@ -1,11 +1,12 @@
 import { NextResponse } from 'next/server';
 import { getActiveRequests } from '@/lib/services/user-requests';
+import { withAuth } from '@/lib/middleware/auth';
 
 interface RouteContext {
   params: Promise<{ project_id: string }>;
 }
 
-export async function GET(_request: Request, { params }: RouteContext) {
+async function handler(_request: Request, _userId: string, { params }: RouteContext) {
   try {
     const { project_id } = await params;
     const summary = await getActiveRequests(project_id);
@@ -22,6 +23,8 @@ export async function GET(_request: Request, { params }: RouteContext) {
     );
   }
 }
+
+export const GET = withAuth(handler);
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
