@@ -1,16 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { listEnvVars, createEnvVar } from '@/lib/services/env';
+import { withAuth, AuthError, getProjectWithOwnership } from '@/lib/middleware/auth';
 
 interface RouteContext {
   params: Promise<{ project_id: string }>;
 }
 
-export async function GET(_request: NextRequest, { params }: RouteContext) {
+async function getHandler(_request: NextRequest, userId: string, { params }: RouteContext) {
   try {
     const { project_id } = await params;
+    await getProjectWithOwnership(project_id, userId);
     const envVars = await listEnvVars(project_id);
     return NextResponse.json(envVars);
   } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ success: false, error: error.message }, { status: error.statusCode });
+    }
     console.error('[Env API] Failed to fetch env vars:', error);
     return NextResponse.json(
       {
@@ -23,9 +28,10 @@ export async function GET(_request: NextRequest, { params }: RouteContext) {
   }
 }
 
-export async function POST(request: NextRequest, { params }: RouteContext) {
+async function postHandler(request: NextRequest, userId: string, { params }: RouteContext) {
   try {
     const { project_id } = await params;
+    await getProjectWithOwnership(project_id, userId);
     const body = await request.json();
     if (!body?.key || typeof body.key !== 'string') {
       return NextResponse.json(
@@ -51,6 +57,9 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
 
     return NextResponse.json({ success: true, data: record }, { status: 201 });
   } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ success: false, error: error.message }, { status: error.statusCode });
+    }
     console.error('[Env API] Failed to create env var:', error);
     const message = error instanceof Error ? error.message : 'Unknown error';
     const status = message.includes('already exists') ? 409 : 500;
@@ -64,6 +73,9 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
     );
   }
 }
+
+export const GET = withAuth(getHandler);
+export const POST = withAuth(postHandler);
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
