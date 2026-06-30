@@ -1,8 +1,9 @@
 import { NextRequest } from 'next/server';
 import { createServiceToken } from '@/lib/services/tokens';
 import { createSuccessResponse, handleApiError } from '@/lib/utils/api-response';
+import { withAuth } from '@/lib/middleware/auth';
 
-export async function POST(request: NextRequest) {
+async function postHandler(request: NextRequest, userId: string) {
   try {
     const body = await request.json();
     const provider = typeof body?.provider === 'string' ? body.provider : '';
@@ -15,6 +16,8 @@ export async function POST(request: NextRequest) {
     return handleApiError(error, 'Tokens API', 'Failed to save token');
   }
 }
+
+export const POST = withAuth(postHandler);
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
