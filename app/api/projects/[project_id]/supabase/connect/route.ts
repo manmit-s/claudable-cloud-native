@@ -1,13 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectExistingSupabase } from '@/lib/services/supabase';
+import { withAuth, getProjectWithOwnership, AuthError } from '@/lib/middleware/auth';
 
 interface RouteContext {
   params: Promise<{ project_id: string }>;
 }
 
-export async function POST(request: NextRequest, { params }: RouteContext) {
+async function postHandler(request: NextRequest, userId: string, { params }: RouteContext) {
   try {
     const { project_id } = await params;
+    await getProjectWithOwnership(project_id, userId);
     const body = await request.json();
     const supabaseProjectId =
       typeof body?.project_id === 'string'
@@ -31,6 +33,9 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
     });
     return NextResponse.json({ success: true, data: result });
   } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ success: false, error: error.message }, { status: error.statusCode });
+    }
     console.error('[API] Failed to connect Supabase project:', error);
     const status = error instanceof Error && 'status' in error ? (error as any).status ?? 500 : 500;
     return NextResponse.json(
@@ -43,6 +48,8 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
     );
   }
 }
+
+export const POST = withAuth(postHandler);
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
