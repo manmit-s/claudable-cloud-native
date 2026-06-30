@@ -1,13 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectVercelProject } from '@/lib/services/vercel';
+import { withAuth, getProjectWithOwnership, AuthError } from '@/lib/middleware/auth';
 
 interface RouteContext {
   params: Promise<{ project_id: string }>;
 }
 
-export async function POST(request: NextRequest, { params }: RouteContext) {
+async function postHandler(request: NextRequest, userId: string, { params }: RouteContext) {
   try {
     const { project_id } = await params;
+    await getProjectWithOwnership(project_id, userId);
     const body = await request.json();
     const projectName = typeof body?.project_name === 'string' ? body.project_name : undefined;
     if (!projectName) {
@@ -31,6 +33,9 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
       message: `Connected Vercel project ${projectName}`,
     });
   } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ success: false, error: error.message }, { status: error.statusCode });
+    }
     console.error('[API] Failed to connect Vercel project:', error);
     const status = error instanceof Error && 'status' in error ? (error as any).status ?? 500 : 500;
     return NextResponse.json(
@@ -43,6 +48,8 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
     );
   }
 }
+
+export const POST = withAuth(postHandler);
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
