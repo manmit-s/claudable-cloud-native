@@ -1,10 +1,6 @@
-/**
- * Server-Sent Events (SSE) Stream API
- * GET /api/chat/[project_id]/stream - Real-time streaming
- */
-
 import { NextRequest } from 'next/server';
 import { streamManager } from '@/lib/services/stream';
+import { withAuth, getProjectWithOwnership } from '@/lib/middleware/auth';
 
 interface RouteContext {
   params: Promise<{ project_id: string }>;
@@ -14,11 +10,13 @@ interface RouteContext {
  * GET /api/chat/[project_id]/stream
  * SSE streaming connection
  */
-export async function GET(
+async function getHandler(
   request: NextRequest,
+  userId: string,
   { params }: RouteContext
 ) {
   const { project_id } = await params;
+  await getProjectWithOwnership(project_id, userId);
 
   // Create ReadableStream
   const stream = new ReadableStream({
@@ -84,6 +82,8 @@ export async function GET(
     },
   });
 }
+
+export const GET = withAuth(getHandler);
 
 // Ensure Node runtime + dynamic rendering for consistent in-memory streams
 export const runtime = 'nodejs';
