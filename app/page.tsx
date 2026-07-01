@@ -401,6 +401,39 @@ export default function HomePage() {
     }
   }
 
+  const downloadProject = async (projectId: string, projectName: string) => {
+    try {
+      showToast('Preparing project download...', 'success');
+      const response = await fetchAPI(`${API_BASE}/api/projects/${projectId}/download`);
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: 'Failed to download project archive' }));
+        throw new Error(errorData.detail || 'Failed to download project archive');
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const contentDisposition = response.headers.get('Content-Disposition');
+      let filename = `${projectName.replace(/[^a-zA-Z0-9_-]/g, '_')}.tar.gz`;
+      if (contentDisposition) {
+        const match = contentDisposition.match(/filename="?([^"]+)"?/);
+        if (match && match[1]) {
+          filename = match[1];
+        }
+      }
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      showToast('Download started', 'success');
+    } catch (error) {
+      console.warn('Failed to download project:', error);
+      showToast(error instanceof Error ? error.message : 'Failed to download project archive', 'error');
+    }
+  };
+
   async function updateProject(projectId: string, newName: string) {
     try {
       const response = await fetchAPI(`${API_BASE}/api/projects/${projectId}`, {
@@ -891,6 +924,18 @@ export default function HomePage() {
                           </div>
                         </div>
                         <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              downloadProject(project.id, project.name);
+                            }}
+                            className="p-1 text-gray-400 hover:text-green-600 transition-colors"
+                            title="Download project archive"
+                          >
+                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                            </svg>
+                          </button>
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
