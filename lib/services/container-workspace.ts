@@ -7,6 +7,13 @@ import { PREVIEW_CONFIG } from '@/lib/config/constants';
 
 const execAsync = promisify(exec);
 
+const lastActivityMap = new Map<string, number>();
+
+export function updateWorkspaceActivity(projectId: string): void {
+  lastActivityMap.set(projectId, Date.now());
+  console.log(`[ContainerWorkspace] Updated last activity for project ${projectId}`);
+}
+
 const PREVIEW_FALLBACK_PORT_START = PREVIEW_CONFIG?.FALLBACK_PORT_START ?? 3100;
 const PREVIEW_FALLBACK_PORT_END = PREVIEW_CONFIG?.FALLBACK_PORT_END ?? 3200;
 const PREVIEW_MAX_PORT = 65535;
@@ -46,10 +53,12 @@ export async function startWorkspace(projectId: string, anthropicApiKey: string)
   try {
     const { stdout } = await execAsync(`docker inspect -f "{{.State.Running}}" ${containerName}`);
     if (stdout.trim() === 'true') {
+      updateWorkspaceActivity(projectId);
       return containerName;
     }
     // If it exists but is not running, start it
     await execAsync(`docker start ${containerName}`);
+    updateWorkspaceActivity(projectId);
     return containerName;
   } catch (err) {
     // Container does not exist, proceed to create it
@@ -59,10 +68,16 @@ export async function startWorkspace(projectId: string, anthropicApiKey: string)
   const projectsDirAbsolute = path.isAbsolute(projectsDir)
     ? projectsDir
     : path.resolve(process.cwd(), projectsDir);
-  const projectPathOnHost = path.join(projectsDirAbsolute, projectId);
+  const localProjectPath = path.join(projectsDirAbsolute, projectId);
 
-  // Ensure project directory exists on host
-  await fs.mkdir(projectPathOnHost, { recursive: true });
+  // Ensure project directory exists locally on the orchestrator filesystem
+  await fs.mkdir(localProjectPath, { recursive: true });
+
+  // Resolve the path to pass to the host Docker daemon for sibling bind mounting
+  const hostProjectsDir = process.env.HOST_PROJECTS_DIR || projectsDirAbsolute;
+  const projectPathOnHost = path.isAbsolute(hostProjectsDir)
+    ? path.join(hostProjectsDir, projectId)
+    : path.join(path.resolve(process.cwd(), hostProjectsDir), projectId);
 
   // Allocate an available preview port
   const bounds = resolvePreviewBounds();
@@ -78,11 +93,13 @@ export async function startWorkspace(projectId: string, anthropicApiKey: string)
   console.log(`[ContainerWorkspace] Starting container with command: ${cmd}`);
   await execAsync(cmd);
 
+  updateWorkspaceActivity(projectId);
   return containerName;
 }
 
 export async function stopWorkspace(projectId: string): Promise<void> {
   const containerName = `claudable-ws-${projectId}`;
+  lastActivityMap.delete(projectId);
   try {
     await execAsync(`docker stop ${containerName}`);
     await execAsync(`docker rm ${containerName}`);
@@ -118,6 +135,8 @@ export async function executeInWorkspace(
   if (!running) {
     throw new Error(`Workspace container ${containerName} is not running`);
   }
+
+  updateWorkspaceActivity(projectId);
 
   const args = [
     'exec',
@@ -186,6 +205,7 @@ export async function startPreviewInWorkspace(projectId: string): Promise<void> 
   const cmd = `docker exec -d -w /workspace ${containerName} npm run dev -- --port 3000`;
   console.log(`[ContainerWorkspace] Starting dev server: ${cmd}`);
   await execAsync(cmd);
+  updateWorkspaceActivity(projectId);
 }
 
 export async function stopPreviewInWorkspace(projectId: string): Promise<void> {
@@ -198,3 +218,62 @@ export async function stopPreviewInWorkspace(projectId: string): Promise<void> {
     await execAsync(`docker exec ${containerName} pkill -f "next"`);
   } catch {}
 }
+
+export async function archiveWorkspace(projectId: string): Promise<any> {
+  const containerName = `claudable-ws-${projectId}`;
+  
+  // Make sure workspace is running
+  const running = await isWorkspaceRunning(projectId);
+  if (!running) {
+    throw new Error(`Workspace container ${containerName} is not running`);
+  }
+
+  const args = [
+    'exec',
+    containerName,
+    'tar',
+    '-cz',
+    '-C',
+    '/workspace',
+    '.'
+  ];
+
+  console.log(`[ContainerWorkspace] Archiving workspace in container ${containerName}`);
+  const child = spawn('docker', args);
+  return child.stdout;
+}
+
+export async function initializeActiveContainers(): Promise<void> {
+  try {
+    const { stdout } = await execAsync(`docker ps --filter "name=claudable-ws-" --format "{{.Names}}"`);
+    const names = stdout.split('\n').map(n => n.trim()).filter(Boolean);
+    const now = Date.now();
+    for (const name of names) {
+      const projectId = name.replace('claudable-ws-', '');
+      if (projectId && !lastActivityMap.has(projectId)) {
+        console.log(`[ContainerWorkspace] Discovered running container: ${name}, registering activity tracking.`);
+        lastActivityMap.set(projectId, now);
+      }
+    }
+  } catch (err) {
+    console.error('[ContainerWorkspace] Failed to auto-initialize running containers list:', err);
+  }
+}
+
+// Start container activity auto-discovery
+initializeActiveContainers().catch(console.error);
+
+const CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+const MAX_IDLE_TIME_MS = 30 * 60 * 1000;   // 30 minutes
+
+setInterval(async () => {
+  console.log('[ContainerWorkspace] Checking for idle container cleanup...');
+  const now = Date.now();
+  for (const [projectId, lastActive] of lastActivityMap.entries()) {
+    if (now - lastActive > MAX_IDLE_TIME_MS) {
+      console.log(`[ContainerWorkspace] Container claudable-ws-${projectId} has been idle for > 30 mins. stopping...`);
+      lastActivityMap.delete(projectId);
+      await stopWorkspace(projectId);
+    }
+  }
+}, CLEANUP_INTERVAL_MS).unref();
