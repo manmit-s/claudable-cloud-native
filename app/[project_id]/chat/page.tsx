@@ -243,6 +243,37 @@ export default function ChatPage() {
   
   const [projectName, setProjectName] = useState<string>('');
   const [projectDescription, setProjectDescription] = useState<string>('');
+
+  const downloadProject = async () => {
+    try {
+      const response = await fetch(`${API_BASE}/api/projects/${projectId}/download`);
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: 'Failed to download project archive' }));
+        throw new Error(errorData.detail || 'Failed to download project archive');
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const contentDisposition = response.headers.get('Content-Disposition');
+      let filename = `${projectName.replace(/[^a-zA-Z0-9_-]/g, '_')}.tar.gz`;
+      if (contentDisposition) {
+        const match = contentDisposition.match(/filename="?([^"]+)"?/);
+        if (match && match[1]) {
+          filename = match[1];
+        }
+      }
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      console.warn('Failed to download project:', error);
+      alert(error instanceof Error ? error.message : 'Failed to download project archive');
+    }
+  };
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const previewUrlRef = useRef<string | null>(null);
   const [tree, setTree] = useState<Entry[]>([]);
@@ -2479,6 +2510,17 @@ const persistProjectPreferences = useCallback(
                 </div>
                 
                 <div className="flex items-center gap-2">
+                  {/* Download Button */}
+                  <button 
+                    onClick={downloadProject}
+                    className="h-9 w-9 flex items-center justify-center bg-gray-100 text-gray-600 hover:text-gray-900 hover:bg-gray-200 rounded-lg transition-colors"
+                    title="Download Project Archive"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                    </svg>
+                  </button>
+                  
                   {/* Settings Button */}
                   <button 
                     onClick={() => setShowGlobalSettings(true)}
